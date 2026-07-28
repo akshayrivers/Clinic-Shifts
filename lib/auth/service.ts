@@ -1,15 +1,8 @@
 import bcrypt from "bcryptjs";
-import { query } from "@/lib/db";
+import { usersRepo, UserEntity } from "@/lib/db";
 import { UserRole, Profession } from "@/types/next-auth";
 
-export interface DBUserRow {
-  id: string;
-  email: string;
-  password_hash: string;
-  full_name: string;
-  role: UserRole;
-  profession: Profession;
-}
+export type DBUserRow = UserEntity;
 
 export interface AuthUser {
   id: string;
@@ -27,7 +20,7 @@ export class AuthenticationError extends Error {
 }
 
 /**
- * Isolated service function to verify credentials against the Postgres database.
+ * Isolated service function to verify credentials against the database using usersRepo.
  */
 export async function verifyUserCredentials(
   emailInput: unknown,
@@ -44,15 +37,8 @@ export async function verifyUserCredentials(
     throw new AuthenticationError("Email and password cannot be empty.", "INVALID_INPUT");
   }
 
-  const rows = await query<DBUserRow>(
-    `SELECT id, email, password_hash, full_name, role, profession 
-     FROM users 
-     WHERE LOWER(email) = $1 
-     LIMIT 1`,
-    [email]
-  );
+  const user = await usersRepo.findByEmail(email);
 
-  const user = rows[0];
   if (!user) {
     throw new AuthenticationError("Invalid email or password.", "INVALID_CREDENTIALS");
   }
@@ -72,20 +58,12 @@ export async function verifyUserCredentials(
 }
 
 /**
- * Isolated service function to get user profile by ID.
+ * Isolated service function to get user profile by ID using usersRepo.
  */
 export async function getUserById(id: string): Promise<AuthUser | null> {
   if (!id) return null;
 
-  const rows = await query<DBUserRow>(
-    `SELECT id, email, password_hash, full_name, role, profession 
-     FROM users 
-     WHERE id = $1 
-     LIMIT 1`,
-    [id]
-  );
-
-  const user = rows[0];
+  const user = await usersRepo.findById(id);
   if (!user) return null;
 
   return {

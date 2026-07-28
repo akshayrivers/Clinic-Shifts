@@ -38,6 +38,8 @@ describe("Authentication Service Tests", () => {
       full_name: "Dr. John Doe",
       role: "staff",
       profession: "doctor",
+      legacy_staff_id: null,
+      created_at: new Date(),
     };
 
     mock.method(pool, "query", async () => ({ rows: [mockUserRow], rowCount: 1 }));
@@ -62,6 +64,8 @@ describe("Authentication Service Tests", () => {
       full_name: "Jane Manager",
       role: "manager",
       profession: null,
+      legacy_staff_id: null,
+      created_at: new Date(),
     };
 
     mock.method(pool, "query", async () => ({ rows: [mockUserRow], rowCount: 1 }));
@@ -82,6 +86,8 @@ describe("Authentication Service Tests", () => {
       full_name: "Nurse Joy",
       role: "staff",
       profession: "nurse",
+      legacy_staff_id: null,
+      created_at: new Date(),
     };
 
     mock.method(pool, "query", async () => ({ rows: [mockUserRow], rowCount: 1 }));

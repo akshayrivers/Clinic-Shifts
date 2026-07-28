@@ -23,12 +23,20 @@ export function Navbar() {
                 Dashboard
               </Link>
               {session.user.role === "manager" && (
-                <Link
-                  href="/manager"
-                  className="bg-indigo-950 text-indigo-200 hover:bg-indigo-900 px-3 py-2 rounded-md transition-colors"
-                >
-                  Manager Portal
-                </Link>
+                <>
+                  <Link
+                    href="/manager"
+                    className="bg-indigo-950 text-indigo-200 hover:bg-indigo-900 px-3 py-2 rounded-md transition-colors"
+                  >
+                    Manager Portal
+                  </Link>
+                  <Link
+                    href="/manager/import"
+                    className="hover:bg-slate-800 text-slate-200 px-3 py-2 rounded-md transition-colors"
+                  >
+                    Import Report
+                  </Link>
+                </>
               )}
               {session.user.role === "staff" && (
                 <Link

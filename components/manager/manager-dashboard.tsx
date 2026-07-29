@@ -728,16 +728,16 @@ export function ManagerDashboard() {
                   required
                   value={assignUserId}
                   onChange={(e) => setAssignUserId(e.target.value)}
-                  size={Math.min(8, Math.max(4, assignablePeople.length))}
+                  size={Math.min(8, Math.max(4, assignablePeople.length + 1))}
                   className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm"
                 >
-                  {assignablePeople.length === 0 && (
-                    <option value="" disabled>
-                      {staffList.length === 0
-                        ? "Loading staff…"
-                        : "No matching staff found"}
-                    </option>
-                  )}
+                  <option value="" disabled>
+                    {staffList.length === 0
+                      ? "Loading staff…"
+                      : assignablePeople.length === 0
+                        ? "No matching staff found"
+                        : "Select a staff member…"}
+                  </option>
                   {assignablePeople.map((person) => (
                     <option key={person.id} value={person.id}>
                       {person.full_name} — {person.profession ?? "staff"} (#

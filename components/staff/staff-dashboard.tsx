@@ -208,6 +208,28 @@ export function StaffDashboard() {
         shifts={shifts}
         title="Week at a Glance"
         subtitle="Click a day to see every shift scheduled that day"
+        renderShiftActions={(shift) => {
+          const isClaimedByMe = shift.claims?.some(
+            (c) => c.user_id === currentUser?.id,
+          );
+          return isClaimedByMe ? (
+            <button
+              onClick={() => handleUnclaimShift(shift.id)}
+              disabled={actioningShiftId === shift.id}
+              className="bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-semibold text-xs px-3 py-1.5 rounded-lg transition-all shadow-sm whitespace-nowrap"
+            >
+              {actioningShiftId === shift.id ? "Unclaiming..." : "Unclaim"}
+            </button>
+          ) : (
+            <button
+              onClick={() => handleClaimShift(shift.id)}
+              disabled={actioningShiftId === shift.id}
+              className="bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold text-xs px-3 py-1.5 rounded-lg transition-all shadow-sm whitespace-nowrap"
+            >
+              {actioningShiftId === shift.id ? "Claiming..." : "Claim"}
+            </button>
+          );
+        }}
       />
 
       {/* Shifts View */}

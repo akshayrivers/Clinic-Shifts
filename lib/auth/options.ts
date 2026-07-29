@@ -7,16 +7,21 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: "Credentials",
       credentials: {
+        staffCode: { label: "Staff code", type: "text", placeholder: "e.g. 121" },
         email: { label: "Email", type: "email", placeholder: "user@clinic.com" },
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error("Please enter your email and password.");
+        if (!credentials?.staffCode || !credentials?.email || !credentials?.password) {
+          throw new Error("Please enter your staff code, email and password.");
         }
 
         try {
-          const user = await verifyUserCredentials(credentials.email, credentials.password);
+          const user = await verifyUserCredentials(
+            credentials.staffCode,
+            credentials.email,
+            credentials.password
+          );
           return {
             id: user.id,
             email: user.email,
@@ -24,6 +29,7 @@ export const authOptions: NextAuthOptions = {
             fullName: user.fullName,
             role: user.role,
             profession: user.profession,
+            staffCode: user.staffCode,
           };
         } catch (error) {
           if (error instanceof AuthenticationError) {
@@ -51,6 +57,7 @@ export const authOptions: NextAuthOptions = {
         token.fullName = user.fullName;
         token.role = user.role;
         token.profession = user.profession;
+        token.staffCode = user.staffCode;
       }
       return token;
     },
@@ -61,6 +68,7 @@ export const authOptions: NextAuthOptions = {
         session.user.fullName = token.fullName;
         session.user.role = token.role;
         session.user.profession = token.profession;
+        session.user.staffCode = token.staffCode;
       }
       return session;
     },

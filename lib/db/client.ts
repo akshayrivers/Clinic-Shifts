@@ -6,7 +6,7 @@ const globalForDb = globalThis as unknown as {
   connPool: Pool | undefined;
 };
 
-const databaseUrl = process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/clinic_db";
+const databaseUrl = process.env.DATABASE_URL;//|| "postgresql://postgres:postgres@localhost:5432/clinic_db";
 
 export const pool: Pool =
   globalForDb.connPool ??

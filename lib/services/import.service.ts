@@ -186,6 +186,10 @@ export const importService = {
       let mergedCount = 0;
       const createdRows: ImportRowEntity[] = [];
 
+      // Tracks staff_codes accepted earlier IN THIS SAME BATCH, so a duplicate staff_id
+      // appearing twice in one CSV is caught even before either row is committed.
+      const staffCodesSeenThisBatch = new Set<number>();
+
       for (let index = 0; index < rawRows.length; index++) {
         const row = rawRows[index];
         const rowNumber = index + 2; // CSV 1-indexed (header is 1)
@@ -193,13 +197,20 @@ export const importService = {
         const fullName = (row.full_name || "").trim();
         const rawRole = (row.role || "").trim();
         const rawEmail = (row.email || "").trim();
-        const legacyId = row.staff_id ? parseInt(row.staff_id.trim(), 10) : null;
+        const rawStaffId = (row.staff_id || "").trim();
 
         let status: ImportRowStatus = "accepted";
         let reason: string | null = null;
         let resultingId: string | null = null;
 
-        if (!fullName) {
+        const staffCode = rawStaffId ? parseInt(rawStaffId, 10) : NaN;
+
+        if (!rawStaffId || isNaN(staffCode)) {
+          // staff_code is our login identifier now — a row with no usable staff_id
+          // can't become a logged-in user, so it's a hard reject, not a soft default.
+          status = "rejected";
+          reason = "missing or invalid staff_id (required as login identifier)";
+        } else if (!fullName) {
           status = "rejected";
           reason = "missing full name";
         } else if (!rawEmail) {
@@ -216,26 +227,30 @@ export const importService = {
               status = "rejected";
               reason = `unrecognized role: ${rawRole}`;
             } else {
-              // Check if user with same email or legacy staff ID already exists
-              const existingByEmail = await usersRepo.findByEmail(email, client);
-              const existingByLegacy = legacyId ? await usersRepo.findByLegacyStaffId(legacyId, client) : null;
+              // Identity is staff_code now, not email — the CSV has legitimate cases of
+              // two different staff_ids sharing an email (e.g. shared front-desk inbox),
+              // so email is never used to decide "is this the same person".
+              const existingUser = staffCodesSeenThisBatch.has(staffCode)
+                ? null // handled below — this is an in-batch duplicate, not a DB one
+                : await usersRepo.findByStaffCode(staffCode, client);
 
-              const existingUser = existingByEmail || existingByLegacy;
-
-              if (existingUser) {
-                // Merge/update existing user
+              if (staffCodesSeenThisBatch.has(staffCode)) {
+                status = "rejected";
+                reason = `duplicate staff_id ${staffCode} appears earlier in this same file`;
+              } else if (existingUser) {
+                // Same staff_id already in the DB — exact duplicate row, merge/update in place.
                 const updated = await usersRepo.update(
                   existingUser.id,
                   {
                     full_name: fullName,
                     role: roleInfo.role,
                     profession: roleInfo.profession,
-                    legacy_staff_id: legacyId ?? existingUser.legacy_staff_id,
+                    email,
                   },
                   client
                 );
                 status = "merged";
-                reason = `Merged with existing staff record (${existingUser.email})`;
+                reason = `Merged with existing staff record (staff_code ${staffCode})`;
                 resultingId = updated?.id ?? existingUser.id;
                 mergedCount++;
               } else {
@@ -247,13 +262,17 @@ export const importService = {
                     full_name: fullName,
                     role: roleInfo.role,
                     profession: roleInfo.profession,
-                    legacy_staff_id: isNaN(legacyId as number) ? null : legacyId,
+                    staff_code: staffCode,
                   },
                   client
                 );
                 status = "accepted";
                 resultingId = newUser.id;
                 acceptedCount++;
+              }
+
+              if (status !== "rejected") {
+                staffCodesSeenThisBatch.add(staffCode);
               }
             }
           }

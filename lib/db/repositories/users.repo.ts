@@ -4,7 +4,7 @@ import { UserEntity, CreateUserInput } from "../types";
 export const usersRepo = {
   async findById(id: string, executor?: QueryExecutor): Promise<UserEntity | null> {
     return queryOne<UserEntity>(
-      `SELECT id, email, password_hash, full_name, role, profession, legacy_staff_id, created_at 
+      `SELECT id, email, password_hash, full_name, role, profession, staff_code, created_at 
        FROM users 
        WHERE id = $1`,
       [id],
@@ -12,9 +12,12 @@ export const usersRepo = {
     );
   },
 
-  async findByEmail(email: string, executor?: QueryExecutor): Promise<UserEntity | null> {
-    return queryOne<UserEntity>(
-      `SELECT id, email, password_hash, full_name, role, profession, legacy_staff_id, created_at 
+  // NOTE: email is intentionally NOT unique (the CSV has duplicate emails across
+  // different staff_ids, e.g. a shared front-desk inbox). This is only useful for
+  // "does this email exist anywhere" checks — never use it as an auth lookup.
+  async findAllByEmail(email: string, executor?: QueryExecutor): Promise<UserEntity[]> {
+    return query<UserEntity>(
+      `SELECT id, email, password_hash, full_name, role, profession, staff_code, created_at 
        FROM users 
        WHERE LOWER(email) = LOWER($1)`,
       [email],
@@ -22,19 +25,20 @@ export const usersRepo = {
     );
   },
 
-  async findByLegacyStaffId(legacyStaffId: number, executor?: QueryExecutor): Promise<UserEntity | null> {
+  // staff_code is the actual login identifier — unique, required, one row per code.
+  async findByStaffCode(staffCode: number, executor?: QueryExecutor): Promise<UserEntity | null> {
     return queryOne<UserEntity>(
-      `SELECT id, email, password_hash, full_name, role, profession, legacy_staff_id, created_at 
+      `SELECT id, email, password_hash, full_name, role, profession, staff_code, created_at 
        FROM users 
-       WHERE legacy_staff_id = $1`,
-      [legacyStaffId],
+       WHERE staff_code = $1`,
+      [staffCode],
       executor
     );
   },
 
   async findAll(executor?: QueryExecutor): Promise<UserEntity[]> {
     return query<UserEntity>(
-      `SELECT id, email, password_hash, full_name, role, profession, legacy_staff_id, created_at 
+      `SELECT id, email, password_hash, full_name, role, profession, staff_code, created_at 
        FROM users 
        ORDER BY full_name ASC`,
       [],
@@ -44,16 +48,16 @@ export const usersRepo = {
 
   async create(data: CreateUserInput, executor?: QueryExecutor): Promise<UserEntity> {
     const rows = await query<UserEntity>(
-      `INSERT INTO users (email, password_hash, full_name, role, profession, legacy_staff_id)
+      `INSERT INTO users (email, password_hash, full_name, role, profession, staff_code)
        VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, email, password_hash, full_name, role, profession, legacy_staff_id, created_at`,
+       RETURNING id, email, password_hash, full_name, role, profession, staff_code, created_at`,
       [
         data.email.toLowerCase().trim(),
         data.password_hash,
         data.full_name,
         data.role,
         data.profession || null,
-        data.legacy_staff_id ?? null,
+        data.staff_code,
       ],
       executor
     );
@@ -89,9 +93,9 @@ export const usersRepo = {
       fields.push(`profession = $${idx++}`);
       values.push(data.profession);
     }
-    if (data.legacy_staff_id !== undefined) {
-      fields.push(`legacy_staff_id = $${idx++}`);
-      values.push(data.legacy_staff_id);
+    if (data.staff_code !== undefined) {
+      fields.push(`staff_code = $${idx++}`);
+      values.push(data.staff_code);
     }
 
     if (fields.length === 0) {
@@ -99,7 +103,7 @@ export const usersRepo = {
     }
 
     values.push(id);
-    const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, email, password_hash, full_name, role, profession, legacy_staff_id, created_at`;
+    const sql = `UPDATE users SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, email, password_hash, full_name, role, profession, staff_code, created_at`;
     return queryOne<UserEntity>(sql, values, executor);
   },
 

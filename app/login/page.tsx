@@ -9,6 +9,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
 
+  const [staffCode, setStaffCode] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -21,6 +22,7 @@ function LoginForm() {
 
     try {
       const res = await signIn("credentials", {
+        staffCode,
         email,
         password,
         redirect: false,
@@ -58,6 +60,20 @@ function LoginForm() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+            Staff code
+          </label>
+          <input
+            type="text"
+            required
+            value={staffCode}
+            onChange={(e) => setStaffCode(e.target.value)}
+            placeholder="e.g. 121"
+            className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-colors text-sm"
+          />
+        </div>
+
         <div>
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
             Email Address
@@ -101,7 +117,11 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-      <Suspense fallback={<div className="text-slate-500 text-sm">Loading login...</div>}>
+      <Suspense
+        fallback={
+          <div className="text-slate-500 text-sm">Loading login...</div>
+        }
+      >
         <LoginForm />
       </Suspense>
     </div>

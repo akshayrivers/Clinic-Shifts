@@ -8,9 +8,13 @@ async function seed() {
   console.log("🌱 Starting Clinic Shift Scheduler seeding & CSV import...");
 
   try {
-    // 1. Ensure at least one Manager exists for administrative logins
+    // 1. Ensure at least one Manager exists for administrative logins.
+    // Managers aren't in the CSV, so they need a staff_code assigned outside the import
+    // pipeline. Reserving 9000+ for manually-seeded managers keeps them visually distinct
+    // from imported staff codes (which come straight from the CSV's staff_id column).
+    const managerStaffCode = 9000;
     const managerEmail = "manager@clinic.com";
-    const existingManager = await usersRepo.findByEmail(managerEmail);
+    const existingManager = await usersRepo.findByStaffCode(managerStaffCode);
 
     let managerId: string;
     if (!existingManager) {
@@ -21,12 +25,15 @@ async function seed() {
         full_name: "Head Clinic Manager",
         role: "manager",
         profession: null,
+        staff_code: managerStaffCode,
       });
       managerId = manager.id;
-      console.log(`✅ Created seed manager: ${managerEmail} (password: manager123)`);
+      console.log(
+        `✅ Created seed manager: staff_code ${managerStaffCode} / ${managerEmail} (password: manager123)`
+      );
     } else {
       managerId = existingManager.id;
-      console.log(`ℹ️ Seed manager already exists: ${managerEmail}`);
+      console.log(`Seed manager already exists: staff_code ${managerStaffCode}`);
     }
 
     // 2. Import staff.csv if present

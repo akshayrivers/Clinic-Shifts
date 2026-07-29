@@ -11,6 +11,7 @@ declare module "next-auth" {
     fullName: string;
     role: UserRole;
     profession: Profession;
+    staffCode: number;
   }
 
   interface Session {
@@ -20,6 +21,7 @@ declare module "next-auth" {
       fullName: string;
       role: UserRole;
       profession: Profession;
+      staffCode: number;
     } & DefaultSession["user"];
   }
 }
@@ -31,5 +33,6 @@ declare module "next-auth/jwt" {
     fullName: string;
     role: UserRole;
     profession: Profession;
+    staffCode: number;
   }
 }

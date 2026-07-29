@@ -10,7 +10,7 @@ export interface UserEntity {
   full_name: string;
   role: UserRole;
   profession: Profession;
-  legacy_staff_id: number | null;
+  staff_code: number;
   created_at: Date;
 }
 
@@ -73,7 +73,7 @@ export interface CreateUserInput {
   full_name: string;
   role: UserRole;
   profession?: Profession;
-  legacy_staff_id?: number | null;
+  staff_code: number; // required — this is the login identifier, not just traceability
 }
 
 export interface CreateShiftInput {

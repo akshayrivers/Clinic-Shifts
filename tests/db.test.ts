@@ -44,7 +44,7 @@ describe("Database Access Layer (DAL) Tests", () => {
     );
   });
 
-  test("usersRepo.findByEmail should query user using lowercase email", async () => {
+  test("usersRepo.findByStaffCode should query user by the unique staff_code", async () => {
     const mockUser = {
       id: "u-1",
       email: "staff@clinic.com",
@@ -52,19 +52,38 @@ describe("Database Access Layer (DAL) Tests", () => {
       full_name: "Staff Member",
       role: "staff" as const,
       profession: "nurse" as const,
-      legacy_staff_id: 10,
+      staff_code: 131,
       created_at: new Date(),
     };
 
     mock.method(pool, "query", async (sql: string, params?: unknown[]) => {
-      assert.ok(sql.includes("LOWER(email) = LOWER($1)"));
-      assert.strictEqual(params?.[0], "STAFF@CLINIC.COM");
+      assert.ok(sql.includes("WHERE staff_code = $1"));
+      assert.strictEqual(params?.[0], 131);
       return { rows: [mockUser], rowCount: 1 };
     });
 
-    const user = await usersRepo.findByEmail("STAFF@CLINIC.COM");
+    const user = await usersRepo.findByStaffCode(131);
     assert.strictEqual(user?.id, "u-1");
     assert.strictEqual(user?.profession, "nurse");
+  });
+
+  test("usersRepo.findAllByEmail should NOT assume uniqueness — can return multiple rows", async () => {
+    // Two different staff_ids sharing an email is a real case in the source CSV
+    // (e.g. staff_id 107 and 998 both use hiro.iyer@clinicmail.test), so this lookup
+    // must be able to return more than one row without erroring.
+    const mockUsers = [
+      { id: "u-1", email: "shared@clinic.com", password_hash: "hash", full_name: "Person A", role: "staff" as const, profession: "receptionist" as const, staff_code: 107, created_at: new Date() },
+      { id: "u-2", email: "shared@clinic.com", password_hash: "hash", full_name: "Person B", role: "staff" as const, profession: "nurse" as const, staff_code: 998, created_at: new Date() },
+    ];
+
+    mock.method(pool, "query", async (sql: string, params?: unknown[]) => {
+      assert.ok(sql.includes("LOWER(email) = LOWER($1)"));
+      assert.strictEqual(params?.[0], "SHARED@CLINIC.COM");
+      return { rows: mockUsers, rowCount: 2 };
+    });
+
+    const users = await usersRepo.findAllByEmail("SHARED@CLINIC.COM");
+    assert.strictEqual(users.length, 2);
   });
 
   test("shiftsRepo.findOverlappingForUser should query overlapping shifts using interval intersection", async () => {

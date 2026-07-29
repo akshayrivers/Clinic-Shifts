@@ -1,5 +1,5 @@
 import { query, queryOne, QueryExecutor } from "../client";
-import { ShiftClaimEntity, CreateShiftClaimInput, Profession } from "../types";
+import { ShiftClaimEntity, ShiftClaimWithUser, CreateShiftClaimInput, Profession } from "../types";
 
 export const shiftClaimsRepo = {
   async findById(id: string, executor?: QueryExecutor): Promise<ShiftClaimEntity | null> {
@@ -8,6 +8,37 @@ export const shiftClaimsRepo = {
        FROM shift_claims 
        WHERE id = $1`,
       [id],
+      executor
+    );
+  },
+
+  // Claims for ONE shift, joined with the claimant's display info (name/profession/email).
+  // Used by getShiftById so a single shift's detail view shows who's assigned.
+  async findByShiftIdWithUser(shiftId: string, executor?: QueryExecutor): Promise<ShiftClaimWithUser[]> {
+    return query<ShiftClaimWithUser>(
+      `SELECT sc.id, sc.shift_id, sc.user_id, sc.claimed_by, sc.created_at,
+              jsonb_build_object('full_name', u.full_name, 'profession', u.profession, 'email', u.email) AS user
+       FROM shift_claims sc
+       JOIN users u ON sc.user_id = u.id
+       WHERE sc.shift_id = $1
+       ORDER BY sc.created_at ASC`,
+      [shiftId],
+      executor
+    );
+  },
+
+  // Claims for MANY shifts in one query (avoids N+1 when rendering a whole week's dashboard).
+  // Returns a flat list — caller groups by shift_id.
+  async findByShiftIdsWithUser(shiftIds: string[], executor?: QueryExecutor): Promise<ShiftClaimWithUser[]> {
+    if (shiftIds.length === 0) return [];
+    return query<ShiftClaimWithUser>(
+      `SELECT sc.id, sc.shift_id, sc.user_id, sc.claimed_by, sc.created_at,
+              jsonb_build_object('full_name', u.full_name, 'profession', u.profession, 'email', u.email) AS user
+       FROM shift_claims sc
+       JOIN users u ON sc.user_id = u.id
+       WHERE sc.shift_id = ANY($1::uuid[])
+       ORDER BY sc.created_at ASC`,
+      [shiftIds],
       executor
     );
   },

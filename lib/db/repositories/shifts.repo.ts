@@ -4,7 +4,7 @@ import { ShiftEntity, CreateShiftInput } from "../types";
 export const shiftsRepo = {
   async findById(id: string, executor?: QueryExecutor): Promise<ShiftEntity | null> {
     return queryOne<ShiftEntity>(
-      `SELECT id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at 
+      `SELECT id, external_id,starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at 
        FROM shifts 
        WHERE id = $1`,
       [id],
@@ -14,7 +14,7 @@ export const shiftsRepo = {
 
   async findByIdForUpdate(id: string, executor: QueryExecutor): Promise<ShiftEntity | null> {
     return queryOne<ShiftEntity>(
-      `SELECT id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at 
+      `SELECT id, external_id,starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at 
        FROM shifts 
        WHERE id = $1 
        FOR UPDATE`,
@@ -25,7 +25,7 @@ export const shiftsRepo = {
 
   async findByRange(startsAt: Date, endsAt: Date, executor?: QueryExecutor): Promise<ShiftEntity[]> {
     return query<ShiftEntity>(
-      `SELECT id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at 
+      `SELECT id,external_id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at 
        FROM shifts 
        WHERE starts_at >= $1 AND ends_at <= $2 
        ORDER BY starts_at ASC`,
@@ -41,7 +41,7 @@ export const shiftsRepo = {
     executor?: QueryExecutor
   ): Promise<ShiftEntity[]> {
     return query<ShiftEntity>(
-      `SELECT s.id, s.starts_at, s.ends_at, s.doctors_required, s.nurses_required, s.receptionists_required, s.series_id, s.created_by, s.created_at, s.updated_at
+      `SELECT s.id,s.external_id, s.starts_at, s.ends_at, s.doctors_required, s.nurses_required, s.receptionists_required, s.series_id, s.created_by, s.created_at, s.updated_at
        FROM shift_claims sc
        JOIN shifts s ON sc.shift_id = s.id
        WHERE sc.user_id = $1
@@ -53,9 +53,9 @@ export const shiftsRepo = {
 
   async create(data: CreateShiftInput, executor?: QueryExecutor): Promise<ShiftEntity> {
     const rows = await query<ShiftEntity>(
-      `INSERT INTO shifts (starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at`,
+      `INSERT INTO shifts (starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by,external_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7,$8)
+       RETURNING id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at,external_id`,
       [
         data.starts_at,
         data.ends_at,
@@ -64,6 +64,7 @@ export const shiftsRepo = {
         data.receptionists_required ?? 0,
         data.series_id ?? null,
         data.created_by ?? null,
+        data.external_id,
       ],
       executor
     );
@@ -105,7 +106,7 @@ export const shiftsRepo = {
     }
 
     values.push(id);
-    const sql = `UPDATE shifts SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at`;
+    const sql = `UPDATE shifts SET ${fields.join(", ")} WHERE id = $${idx} RETURNING id, external_id,starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at`;
     return queryOne<ShiftEntity>(sql, values, executor);
   },
 
@@ -116,5 +117,28 @@ export const shiftsRepo = {
       executor
     );
     return rows.length > 0;
+  },
+  async findByExternalId(
+    externalId: number,
+    executor?: QueryExecutor
+  ): Promise<ShiftEntity | null> {
+    return queryOne<ShiftEntity>(
+      `SELECT
+        id,
+        external_id,
+        starts_at,
+        ends_at,
+        doctors_required,
+        nurses_required,
+        receptionists_required,
+        series_id,
+        created_by,
+        created_at,
+        updated_at
+     FROM shifts
+     WHERE external_id = $1`,
+      [externalId],
+      executor
+    );
   },
 };

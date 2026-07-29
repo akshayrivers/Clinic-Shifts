@@ -16,6 +16,7 @@ export interface UserEntity {
 
 export interface ShiftSeriesEntity {
   id: string;
+  external_id: number; // shift id 
   days_of_week: number[];
   start_time: string;
   end_time: string;
@@ -48,6 +49,14 @@ export interface ShiftClaimEntity {
   created_at: Date;
 }
 
+export interface ShiftClaimWithUser extends ShiftClaimEntity {
+  user: {
+    full_name: string;
+    profession: Profession;
+    email: string;
+  };
+}
+
 export interface ImportBatchEntity {
   id: string;
   source_filename: string;
@@ -77,6 +86,7 @@ export interface CreateUserInput {
 }
 
 export interface CreateShiftInput {
+  external_id: number;
   starts_at: Date | string;
   ends_at: Date | string;
   doctors_required?: number;

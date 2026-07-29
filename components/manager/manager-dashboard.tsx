@@ -3,31 +3,16 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRealtimeShifts } from "@/hooks/use-realtime-shifts";
+import { ShiftItem, getShiftStaffingMetrics } from "@/components/shared/types";
+import { WeekCoverageDashboard } from "@/components/shared/week-coverage-dashboard";
 
-export interface ShiftClaim {
+export interface StaffUser {
   id: string;
-  shift_id: string;
-  user_id: string;
-  claimed_by: string;
-  created_at: string;
-  user?: {
-    full_name: string;
-    profession: "doctor" | "nurse" | "receptionist";
-    email: string;
-  };
-}
-
-export interface ShiftItem {
-  id: string;
-  starts_at: string;
-  ends_at: string;
-  doctors_required: number;
-  nurses_required: number;
-  receptionists_required: number;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-  claims?: ShiftClaim[];
+  staff_code: number;
+  full_name: string;
+  email: string;
+  role: "manager" | "staff";
+  profession: "doctor" | "nurse" | "receptionist" | null;
 }
 
 export function ManagerDashboard() {
@@ -37,15 +22,12 @@ export function ManagerDashboard() {
 
   // Filters & Search State
   const [searchQuery, setSearchQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState<"all" | "doctor" | "nurse" | "receptionist">("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "full" | "partial" | "empty">("all");
-  const [selectedWeekStart, setSelectedWeekStart] = useState<string>(() => {
-    const today = new Date();
-    const day = today.getDay();
-    const diff = today.getDate() - day + (day === 0 ? -6 : 1); // Monday
-    const monday = new Date(today.setDate(diff));
-    return monday.toISOString().split("T")[0];
-  });
+  const [roleFilter, setRoleFilter] = useState<
+    "all" | "doctor" | "nurse" | "receptionist"
+  >("all");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "full" | "partial" | "empty"
+  >("all");
 
   // Modal / Form state for Create / Edit Shift
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -62,7 +44,31 @@ export function ManagerDashboard() {
   // Assignment Modal state
   const [assigningShiftId, setAssigningShiftId] = useState<string | null>(null);
   const [assignUserId, setAssignUserId] = useState("");
-  const [assignActionMessage, setAssignActionMessage] = useState<string | null>(null);
+  const [assignSearchQuery, setAssignSearchQuery] = useState("");
+  const [assignActionMessage, setAssignActionMessage] = useState<string | null>(
+    null,
+  );
+
+  // Full staff directory, fetched once — powers the "Assign Staff" picker so
+  // managers select a real person instead of typing a raw UUID.
+  const [staffList, setStaffList] = useState<StaffUser[]>([]);
+
+  const fetchStaffList = useCallback(async () => {
+    try {
+      const res = await fetch("/api/users");
+      if (!res.ok) return; // non-manager or transient error — picker just falls back to empty
+      const data = await res.json();
+      setStaffList(
+        (data.users || []).filter((u: StaffUser) => u.role === "staff"),
+      );
+    } catch {
+      // Silent — the assign form still works via manual entry if this fails.
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStaffList();
+  }, [fetchStaffList]);
 
   const fetchShifts = useCallback(async () => {
     try {
@@ -71,6 +77,17 @@ export function ManagerDashboard() {
       if (!res.ok) throw new Error("Failed to load shifts");
       const data = await res.json();
       setShifts(data.shifts || []);
+
+      console.log(
+        "[ManagerDashboard] sample shift",
+        data[0]?.id,
+
+        "claimsLen",
+        data[0]?.claims?.length,
+
+        "status",
+        data[0] ? getShiftStaffingMetrics(data[0]).status : null,
+      );
     } catch (err: unknown) {
       setError((err as Error).message);
     } finally {
@@ -83,56 +100,53 @@ export function ManagerDashboard() {
   }, [fetchShifts]);
 
   // Realtime update callback
-  useRealtimeShifts(useCallback(() => {
+  useRealtimeShifts(() => {
     fetchShifts();
-  }, [fetchShifts]));
+  });
 
-  // Calculate missing roles for a shift
-  const getShiftStaffingMetrics = useCallback((shift: ShiftItem) => {
-    const claims = shift.claims || [];
-    let claimedDoctors = 0;
-    let claimedNurses = 0;
-    let claimedReceptionists = 0;
+  // The shift the "Assign Staff" modal is currently open for — drives the
+  // modal's header context (date/time/missing roles) automatically.
+  const assigningShift = useMemo(
+    () => shifts.find((s) => s.id === assigningShiftId) ?? null,
+    [shifts, assigningShiftId],
+  );
 
-    for (const c of claims) {
-      if (c.user?.profession === "doctor") claimedDoctors++;
-      else if (c.user?.profession === "nurse") claimedNurses++;
-      else if (c.user?.profession === "receptionist") claimedReceptionists++;
-    }
+  // People eligible to be picked in the "Assign Staff" modal for the currently
+  // open shift: excludes anyone already assigned to it, supports a name/email/
+  // staff_code search, and floats still-needed professions to the top.
+  const assignablePeople = useMemo(() => {
+    if (!assigningShift) return [];
 
-    const missingDoctors = Math.max(0, shift.doctors_required - claimedDoctors);
-    const missingNurses = Math.max(0, shift.nurses_required - claimedNurses);
-    const missingReceptionists = Math.max(0, shift.receptionists_required - claimedReceptionists);
-
-    const totalRequired = shift.doctors_required + shift.nurses_required + shift.receptionists_required;
-    const totalClaimed = claimedDoctors + claimedNurses + claimedReceptionists;
-    const totalMissing = missingDoctors + missingNurses + missingReceptionists;
-
-    let status: "full" | "partial" | "empty" = "empty";
-    if (totalClaimed >= totalRequired && totalRequired > 0) {
-      status = "full";
-    } else if (totalClaimed > 0) {
-      status = "partial";
-    }
-
-    const missingList: string[] = [];
-    if (missingDoctors > 0) missingList.push(`${missingDoctors} Doctor${missingDoctors > 1 ? "s" : ""}`);
-    if (missingNurses > 0) missingList.push(`${missingNurses} Nurse${missingNurses > 1 ? "s" : ""}`);
-    if (missingReceptionists > 0) missingList.push(`${missingReceptionists} Receptionist${missingReceptionists > 1 ? "s" : ""}`);
-
-    return {
-      status,
-      totalRequired,
-      totalClaimed,
-      totalMissing,
-      missingDoctors,
-      missingNurses,
-      missingReceptionists,
-      missingText: missingList.length > 0 ? `Missing: ${missingList.join(", ")}` : "Fully Staffed",
+    const alreadyAssignedIds = new Set(
+      (assigningShift.claims || []).map((c) => c.user_id),
+    );
+    const metrics = getShiftStaffingMetrics(assigningShift);
+    const stillNeeded: Record<string, boolean> = {
+      doctor: metrics.missingDoctors > 0,
+      nurse: metrics.missingNurses > 0,
+      receptionist: metrics.missingReceptionists > 0,
     };
-  }, []);
 
-  // Filtered shifts logic
+    const query = assignSearchQuery.trim().toLowerCase();
+
+    return staffList
+      .filter((person) => !alreadyAssignedIds.has(person.id))
+      .filter((person) => {
+        if (!query) return true;
+        return (
+          person.full_name.toLowerCase().includes(query) ||
+          person.email.toLowerCase().includes(query) ||
+          String(person.staff_code).includes(query)
+        );
+      })
+      .sort((a, b) => {
+        const aNeeded = a.profession ? stillNeeded[a.profession] : false;
+        const bNeeded = b.profession ? stillNeeded[b.profession] : false;
+        if (aNeeded !== bNeeded) return aNeeded ? -1 : 1;
+        return a.full_name.localeCompare(b.full_name);
+      });
+  }, [assigningShift, staffList, assignSearchQuery, getShiftStaffingMetrics]);
+
   const filteredShifts = useMemo(() => {
     return shifts.filter((s) => {
       const metrics = getShiftStaffingMetrics(s);
@@ -149,33 +163,16 @@ export function ManagerDashboard() {
       // Role filter
       if (roleFilter === "doctor" && s.doctors_required <= 0) return false;
       if (roleFilter === "nurse" && s.nurses_required <= 0) return false;
-      if (roleFilter === "receptionist" && s.receptionists_required <= 0) return false;
+      if (roleFilter === "receptionist" && s.receptionists_required <= 0)
+        return false;
 
       // Status filter
-      if (statusFilter !== "all" && metrics.status !== statusFilter) return false;
+      if (statusFilter !== "all" && metrics.status !== statusFilter)
+        return false;
 
       return true;
     });
   }, [shifts, searchQuery, roleFilter, statusFilter, getShiftStaffingMetrics]);
-
-  // Week Days Calculation for Coverage View
-  const weekDays = useMemo(() => {
-    const start = new Date(selectedWeekStart);
-    const days: { dateStr: string; dayName: string; formattedDate: string }[] = [];
-    const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      const dateStr = d.toISOString().split("T")[0];
-      days.push({
-        dateStr,
-        dayName: dayNames[i],
-        formattedDate: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      });
-    }
-    return days;
-  }, [selectedWeekStart]);
 
   // Shift Create/Edit Handler
   const handleSaveShift = async (e: React.FormEvent) => {
@@ -183,7 +180,9 @@ export function ManagerDashboard() {
     setError(null);
 
     try {
-      const url = editingShiftId ? `/api/shifts/${editingShiftId}` : "/api/shifts";
+      const url = editingShiftId
+        ? `/api/shifts/${editingShiftId}`
+        : "/api/shifts";
       const method = editingShiftId ? "PUT" : "POST";
 
       const res = await fetch(url, {
@@ -265,9 +264,12 @@ export function ManagerDashboard() {
       {/* Top Banner & Quick Actions */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Manager Dashboard</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Manager Dashboard
+          </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Manage clinic shifts, assign staff members, monitor weekly coverage, and review CSV import reports.
+            Manage clinic shifts, assign staff members, monitor weekly coverage,
+            and review CSV import reports.
           </p>
         </div>
 
@@ -304,86 +306,34 @@ export function ManagerDashboard() {
         </div>
       )}
 
-      {/* Week Coverage Dashboard */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-          <div>
-            <h2 className="text-lg font-bold">Week Coverage Dashboard</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Week-at-a-glance staffing indicator and missing roles overview
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 text-sm">
-            <label className="font-semibold text-xs text-slate-600 dark:text-slate-400">Week Starting:</label>
-            <input
-              type="date"
-              value={selectedWeekStart}
-              onChange={(e) => setSelectedWeekStart(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-            />
-          </div>
-        </div>
-
-        {/* 7-Day Grid View */}
-        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
-          {weekDays.map((day) => {
-            const dayShifts = shifts.filter((s) => s.starts_at.startsWith(day.dateStr));
-
-            return (
-              <div
-                key={day.dateStr}
-                className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-lg p-3 flex flex-col h-full min-h-[160px]"
-              >
-                <div className="text-center border-b border-slate-200 dark:border-slate-800 pb-2 mb-2">
-                  <div className="text-xs font-bold text-slate-500 uppercase">{day.dayName}</div>
-                  <div className="text-sm font-semibold">{day.formattedDate}</div>
-                </div>
-
-                <div className="space-y-2 flex-1 overflow-y-auto max-h-56">
-                  {dayShifts.length === 0 ? (
-                    <div className="text-[11px] text-slate-400 text-center py-4">No shifts</div>
-                  ) : (
-                    dayShifts.map((s) => {
-                      const metrics = getShiftStaffingMetrics(s);
-                      const startStr = new Date(s.starts_at).toISOString().substring(11, 16);
-                      const endStr = new Date(s.ends_at).toISOString().substring(11, 16);
-
-                      return (
-                        <div
-                          key={s.id}
-                          className={`p-2 rounded-md border text-xs space-y-1 ${
-                            metrics.status === "full"
-                              ? "bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900"
-                              : metrics.status === "partial"
-                              ? "bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900"
-                              : "bg-rose-50 text-rose-900 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900"
-                          }`}
-                        >
-                          <div className="font-semibold flex justify-between">
-                            <span>{startStr}–{endStr}</span>
-                            <span className="capitalize font-bold text-[10px]">{metrics.status}</span>
-                          </div>
-                          <div className="text-[10px] leading-tight font-medium opacity-90">
-                            {metrics.missingText}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Week Coverage Dashboard — shared with the staff view */}
+      <WeekCoverageDashboard
+        shifts={shifts}
+        renderShiftActions={(shift) => (
+          <button
+            onClick={() => {
+              setAssigningShiftId(shift.id);
+              setAssignUserId("");
+              setAssignSearchQuery("");
+              setAssignActionMessage(null);
+            }}
+            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-2.5 py-1.5 rounded transition-colors whitespace-nowrap"
+          >
+            Assign Staff
+          </button>
+        )}
+      />
 
       {/* Shift List with Search & Filtering */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
           <div>
-            <h2 className="text-lg font-bold">All Clinic Shifts ({filteredShifts.length})</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Search, filter, edit, and assign staff members</p>
+            <h2 className="text-lg font-bold">
+              All Clinic Shifts ({filteredShifts.length})
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Search, filter, edit, and assign staff members
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -399,7 +349,11 @@ export function ManagerDashboard() {
             {/* Role Filter */}
             <select
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value as "all" | "doctor" | "nurse" | "receptionist")}
+              onChange={(e) =>
+                setRoleFilter(
+                  e.target.value as "all" | "doctor" | "nurse" | "receptionist",
+                )
+              }
               className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             >
               <option value="all">All Roles</option>
@@ -411,7 +365,11 @@ export function ManagerDashboard() {
             {/* Status Filter */}
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as "all" | "full" | "partial" | "empty")}
+              onChange={(e) =>
+                setStatusFilter(
+                  e.target.value as "all" | "full" | "partial" | "empty",
+                )
+              }
               className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
             >
               <option value="all">All Statuses</option>
@@ -424,9 +382,13 @@ export function ManagerDashboard() {
 
         {/* Shift List Table */}
         {isLoading ? (
-          <div className="py-12 text-center text-slate-500 text-sm">Loading shifts...</div>
+          <div className="py-12 text-center text-slate-500 text-sm">
+            Loading shifts...
+          </div>
         ) : filteredShifts.length === 0 ? (
-          <div className="py-12 text-center text-slate-500 text-sm">No shifts match your search and filter criteria.</div>
+          <div className="py-12 text-center text-slate-500 text-sm">
+            No shifts match your search and filter criteria.
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
@@ -445,13 +407,17 @@ export function ManagerDashboard() {
                   const startDate = new Date(shift.starts_at);
                   const endDate = new Date(shift.ends_at);
 
-                  const isOvernight = endDate.getUTCDate() !== startDate.getUTCDate();
+                  const isOvernight =
+                    endDate.getUTCDate() !== startDate.getUTCDate();
                   const dateStr = startDate.toISOString().split("T")[0];
                   const startStr = startDate.toISOString().substring(11, 16);
                   const endStr = endDate.toISOString().substring(11, 16);
 
                   return (
-                    <tr key={shift.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                    <tr
+                      key={shift.id}
+                      className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
+                    >
                       <td className="py-4 px-4 font-medium">
                         <div>{dateStr}</div>
                         <div className="text-xs text-slate-500">
@@ -460,9 +426,24 @@ export function ManagerDashboard() {
                       </td>
 
                       <td className="py-4 px-4 text-xs space-y-1">
-                        <div>Doctors: <span className="font-semibold">{shift.doctors_required}</span></div>
-                        <div>Nurses: <span className="font-semibold">{shift.nurses_required}</span></div>
-                        <div>Receptionists: <span className="font-semibold">{shift.receptionists_required}</span></div>
+                        <div>
+                          Doctors:{" "}
+                          <span className="font-semibold">
+                            {shift.doctors_required}
+                          </span>
+                        </div>
+                        <div>
+                          Nurses:{" "}
+                          <span className="font-semibold">
+                            {shift.nurses_required}
+                          </span>
+                        </div>
+                        <div>
+                          Receptionists:{" "}
+                          <span className="font-semibold">
+                            {shift.receptionists_required}
+                          </span>
+                        </div>
                       </td>
 
                       <td className="py-4 px-4">
@@ -471,25 +452,36 @@ export function ManagerDashboard() {
                             metrics.status === "full"
                               ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
                               : metrics.status === "partial"
-                              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
-                              : "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+                                ? "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                                : "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
                           }`}
                         >
                           {metrics.status}
                         </span>
-                        <div className="text-xs text-slate-500 mt-1 font-medium">{metrics.missingText}</div>
+                        <div className="text-xs text-slate-500 mt-1 font-medium">
+                          {metrics.missingText}
+                        </div>
                       </td>
 
                       <td className="py-4 px-4 text-xs">
                         {shift.claims && shift.claims.length > 0 ? (
                           <div className="space-y-1">
                             {shift.claims.map((claim) => (
-                              <div key={claim.id} className="flex items-center justify-between gap-2 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">
+                              <div
+                                key={claim.id}
+                                className="flex items-center justify-between gap-2 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded"
+                              >
                                 <span>
-                                  {claim.user?.full_name || claim.user_id} ({claim.user?.profession || "staff"})
+                                  {claim.user?.full_name || claim.user_id} (
+                                  {claim.user?.profession || "staff"})
                                 </span>
                                 <button
-                                  onClick={() => handleRemoveAssignment(shift.id, claim.user_id)}
+                                  onClick={() =>
+                                    handleRemoveAssignment(
+                                      shift.id,
+                                      claim.user_id,
+                                    )
+                                  }
                                   className="text-rose-600 hover:text-rose-700 font-bold ml-1"
                                   title="Remove assignment"
                                 >
@@ -499,7 +491,9 @@ export function ManagerDashboard() {
                             ))}
                           </div>
                         ) : (
-                          <span className="text-slate-400 italic">None assigned</span>
+                          <span className="text-slate-400 italic">
+                            None assigned
+                          </span>
                         )}
                       </td>
 
@@ -508,6 +502,7 @@ export function ManagerDashboard() {
                           onClick={() => {
                             setAssigningShiftId(shift.id);
                             setAssignUserId("");
+                            setAssignSearchQuery("");
                             setAssignActionMessage(null);
                           }}
                           className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-2.5 py-1.5 rounded transition-colors"
@@ -524,7 +519,8 @@ export function ManagerDashboard() {
                               endTime: endStr,
                               doctorsRequired: shift.doctors_required,
                               nursesRequired: shift.nurses_required,
-                              receptionistsRequired: shift.receptionists_required,
+                              receptionistsRequired:
+                                shift.receptionists_required,
                             });
                             setIsModalOpen(true);
                           }}
@@ -564,7 +560,9 @@ export function ManagerDashboard() {
                   type="date"
                   required
                   value={formData.date}
-                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, date: e.target.value })
+                  }
                   className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
                 />
               </div>
@@ -576,7 +574,9 @@ export function ManagerDashboard() {
                     type="time"
                     required
                     value={formData.startTime}
-                    onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, startTime: e.target.value })
+                    }
                     className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
                   />
                 </div>
@@ -586,7 +586,9 @@ export function ManagerDashboard() {
                     type="time"
                     required
                     value={formData.endTime}
-                    onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, endTime: e.target.value })
+                    }
                     className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
                   />
                 </div>
@@ -594,35 +596,57 @@ export function ManagerDashboard() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block font-semibold mb-1 text-xs">Doctors</label>
+                  <label className="block font-semibold mb-1 text-xs">
+                    Doctors
+                  </label>
                   <input
                     type="number"
                     min="0"
                     required
                     value={formData.doctorsRequired}
-                    onChange={(e) => setFormData({ ...formData, doctorsRequired: parseInt(e.target.value, 10) || 0 })}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        doctorsRequired: parseInt(e.target.value, 10) || 0,
+                      })
+                    }
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold mb-1 text-xs">Nurses</label>
+                  <label className="block font-semibold mb-1 text-xs">
+                    Nurses
+                  </label>
                   <input
                     type="number"
                     min="0"
                     required
                     value={formData.nursesRequired}
-                    onChange={(e) => setFormData({ ...formData, nursesRequired: parseInt(e.target.value, 10) || 0 })}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        nursesRequired: parseInt(e.target.value, 10) || 0,
+                      })
+                    }
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold mb-1 text-xs">Receptionists</label>
+                  <label className="block font-semibold mb-1 text-xs">
+                    Receptionists
+                  </label>
                   <input
                     type="number"
                     min="0"
                     required
                     value={formData.receptionistsRequired}
-                    onChange={(e) => setFormData({ ...formData, receptionistsRequired: parseInt(e.target.value, 10) || 0 })}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        receptionistsRequired:
+                          parseInt(e.target.value, 10) || 0,
+                      })
+                    }
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
                   />
                 </div>
@@ -649,33 +673,78 @@ export function ManagerDashboard() {
       )}
 
       {/* Assign Staff Modal */}
-      {assigningShiftId && (
+      {assigningShiftId && assigningShift && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 w-full max-w-md shadow-2xl">
-            <h2 className="text-xl font-bold mb-2">Assign Staff Member</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-              Enter the staff User ID or Email to assign them to this shift.
-            </p>
+            <h2 className="text-xl font-bold mb-1">Assign Staff Member</h2>
+
+            {/* Auto-populated shift context — no need to look up the shift elsewhere */}
+            <div className="mb-4 p-3 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs">
+              <div className="font-semibold">
+                {new Date(assigningShift.starts_at).toISOString().split("T")[0]}
+                {"  "}
+                {new Date(assigningShift.starts_at)
+                  .toISOString()
+                  .substring(11, 16)}{" "}
+                –{" "}
+                {new Date(assigningShift.ends_at)
+                  .toISOString()
+                  .substring(11, 16)}
+              </div>
+              <div className="text-slate-500 dark:text-slate-400 mt-0.5">
+                {getShiftStaffingMetrics(assigningShift).missingText}
+              </div>
+            </div>
 
             {assignActionMessage && (
-              <div className={`mb-4 p-3 rounded-lg text-xs font-medium ${
-                assignActionMessage.startsWith("Error") ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"
-              }`}>
+              <div
+                className={`mb-4 p-3 rounded-lg text-xs font-medium ${
+                  assignActionMessage.startsWith("Error")
+                    ? "bg-rose-50 text-rose-700"
+                    : "bg-emerald-50 text-emerald-700"
+                }`}
+              >
                 {assignActionMessage}
               </div>
             )}
 
             <form onSubmit={handleAssignStaff} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold mb-1">Target Staff User ID</label>
+                <label className="block text-xs font-semibold mb-1">
+                  Search staff
+                </label>
                 <input
                   type="text"
+                  placeholder="Search by name, email, or staff code"
+                  value={assignSearchQuery}
+                  onChange={(e) => setAssignSearchQuery(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm mb-2"
+                />
+
+                <label className="block text-xs font-semibold mb-1">
+                  Select staff member
+                </label>
+                <select
                   required
-                  placeholder="e.g. 11111111-1111-1111-1111-111111111111"
                   value={assignUserId}
                   onChange={(e) => setAssignUserId(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono"
-                />
+                  size={Math.min(8, Math.max(4, assignablePeople.length))}
+                  className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm"
+                >
+                  {assignablePeople.length === 0 && (
+                    <option value="" disabled>
+                      {staffList.length === 0
+                        ? "Loading staff…"
+                        : "No matching staff found"}
+                    </option>
+                  )}
+                  {assignablePeople.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.full_name} — {person.profession ?? "staff"} (#
+                      {person.staff_code})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
@@ -688,7 +757,8 @@ export function ManagerDashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-lg shadow-sm text-sm"
+                  disabled={!assignUserId}
+                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-lg shadow-sm text-sm disabled:opacity-50"
                 >
                   Assign Staff
                 </button>

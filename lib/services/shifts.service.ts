@@ -1,4 +1,8 @@
-import { shiftsRepo, ShiftEntity, CreateShiftInput } from "@/lib/db";
+import { shiftsRepo, shiftClaimsRepo, ShiftEntity, CreateShiftInput, ShiftClaimWithUser } from "@/lib/db";
+
+export interface ShiftWithClaims extends ShiftEntity {
+  claims: ShiftClaimWithUser[];
+}
 
 export class ShiftValidationError extends Error {
   constructor(message: string, public readonly code: string = "VALIDATION_ERROR") {
@@ -137,14 +141,32 @@ export const shiftsService = {
     return shiftsRepo.delete(id);
   },
 
-  async getShiftById(id: string): Promise<ShiftEntity | null> {
-    return shiftsRepo.findById(id);
+  async getShiftById(id: string): Promise<ShiftWithClaims | null> {
+    const shift = await shiftsRepo.findById(id);
+    if (!shift) return null;
+    const claims = await shiftClaimsRepo.findByShiftIdWithUser(id);
+    return { ...shift, claims };
   },
 
-  async getShifts(startDate?: Date, endDate?: Date): Promise<ShiftEntity[]> {
-    if (startDate && endDate) {
-      return shiftsRepo.findByRange(startDate, endDate);
+  async getShifts(startDate?: Date, endDate?: Date): Promise<ShiftWithClaims[]> {
+    const shifts = startDate && endDate
+      ? await shiftsRepo.findByRange(startDate, endDate)
+      : await shiftsRepo.findByRange(new Date("2000-01-01"), new Date("2100-01-01"));
+
+    if (shifts.length === 0) return [];
+
+    // One query for every shift's claims, instead of one query per shift (N+1).
+    const allClaims = await shiftClaimsRepo.findByShiftIdsWithUser(shifts.map((s) => s.id));
+    const claimsByShiftId = new Map<string, ShiftClaimWithUser[]>();
+    for (const claim of allClaims) {
+      const existing = claimsByShiftId.get(claim.shift_id) ?? [];
+      existing.push(claim);
+      claimsByShiftId.set(claim.shift_id, existing);
     }
-    return shiftsRepo.findByRange(new Date("2000-01-01"), new Date("2100-01-01"));
+
+    return shifts.map((shift) => ({
+      ...shift,
+      claims: claimsByShiftId.get(shift.id) ?? [],
+    }));
   },
 };

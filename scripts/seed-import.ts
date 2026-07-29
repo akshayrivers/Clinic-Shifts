@@ -52,7 +52,7 @@ async function seed() {
       const shiftsCSV = fs.readFileSync(shiftsPath, "utf-8");
       const result = await importService.importShiftsCSV(shiftsCSV, "shifts.csv", managerId);
       console.log(
-        `✅ Imported shifts.csv -> Total: ${result.totalRows}, Accepted: ${result.acceptedCount}, Rejected: ${result.rejectedCount}`
+        `✅ Imported shifts.csv -> Total: ${result.totalRows}, Accepted: ${result.acceptedCount}, Merged: ${result.mergedCount}, Rejected: ${result.rejectedCount}`
       );
     }
 

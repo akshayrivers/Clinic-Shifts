@@ -16,7 +16,6 @@ export interface UserEntity {
 
 export interface ShiftSeriesEntity {
   id: string;
-  external_id: number; // shift id 
   days_of_week: number[];
   start_time: string;
   end_time: string;
@@ -30,6 +29,7 @@ export interface ShiftSeriesEntity {
 
 export interface ShiftEntity {
   id: string;
+  external_id: number;
   starts_at: Date;
   ends_at: Date;
   doctors_required: number;

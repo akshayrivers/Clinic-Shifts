@@ -328,10 +328,15 @@ export const importService = {
       let mergedCount = 0;
       const createdRows: ImportRowEntity[] = [];
 
+      // Tracks external_ids accepted earlier IN THIS SAME BATCH, so a duplicate shift_id
+      // appearing twice in one CSV is caught even before either row is committed.
+      const externalIdsSeenThisBatch = new Set<number>();
+
       for (let index = 0; index < rawRows.length; index++) {
         const row = rawRows[index];
         const rowNumber = index + 2;
 
+        const rawShiftId = (row.shift_id || "").trim();
         const rawDate = (row.date || "").trim();
         const rawStartTime = (row.start_time || "").trim();
         const rawEndTime = (row.end_time || "").trim();
@@ -341,43 +346,80 @@ export const importService = {
         let reason: string | null = null;
         let resultingId: string | null = null;
 
-        const dateFormatted = normalizeDate(rawDate);
-        if (!dateFormatted) {
+        const externalId = rawShiftId ? parseInt(rawShiftId, 10) : NaN;
+
+        if (!rawShiftId || isNaN(externalId)) {
           status = "rejected";
-          reason = `invalid date: ${rawDate}`;
-        } else if (!/^\d{2}:\d{2}$/.test(rawStartTime) || !/^\d{2}:\d{2}$/.test(rawEndTime)) {
-          status = "rejected";
-          reason = `invalid or malformed time format: start='${rawStartTime}', end='${rawEndTime}'`;
+          reason = "missing or invalid shift_id (required as external identifier)";
         } else {
-          const reqs = parseRequirementsString(rawReqs);
-          if (!reqs) {
+          const dateFormatted = normalizeDate(rawDate);
+          if (!dateFormatted) {
             status = "rejected";
-            reason = `unrecognized requirement format: '${rawReqs}'`;
-          } else if (reqs.doctors + reqs.nurses + reqs.receptionists <= 0) {
+            reason = `invalid date: ${rawDate}`;
+          } else if (!/^\d{2}:\d{2}$/.test(rawStartTime) || !/^\d{2}:\d{2}$/.test(rawEndTime)) {
             status = "rejected";
-            reason = "shift requires at least one staff member";
+            reason = `invalid or malformed time format: start='${rawStartTime}', end='${rawEndTime}'`;
           } else {
-            const startsAt = new Date(`${dateFormatted}T${rawStartTime}:00Z`);
-            let endsAt = new Date(`${dateFormatted}T${rawEndTime}:00Z`);
+            const reqs = parseRequirementsString(rawReqs);
+            if (!reqs) {
+              status = "rejected";
+              reason = `unrecognized requirement format: '${rawReqs}'`;
+            } else if (reqs.doctors + reqs.nurses + reqs.receptionists <= 0) {
+              status = "rejected";
+              reason = "shift requires at least one staff member";
+            } else {
+              const startsAt = new Date(`${dateFormatted}T${rawStartTime}:00Z`);
+              let endsAt = new Date(`${dateFormatted}T${rawEndTime}:00Z`);
 
-            if (endsAt <= startsAt) {
-              endsAt = new Date(endsAt.getTime() + 24 * 60 * 60 * 1000); // Overnight shift
+              if (endsAt <= startsAt) {
+                endsAt = new Date(endsAt.getTime() + 24 * 60 * 60 * 1000); // Overnight shift
+              }
+
+              const existingShift = externalIdsSeenThisBatch.has(externalId)
+                ? null
+                : await shiftsRepo.findByExternalId(externalId, client);
+
+              if (externalIdsSeenThisBatch.has(externalId)) {
+                status = "rejected";
+                reason = `duplicate shift_id ${externalId} appears earlier in this same file`;
+              } else if (existingShift) {
+                const updated = await shiftsRepo.update(
+                  existingShift.id,
+                  {
+                    starts_at: startsAt,
+                    ends_at: endsAt,
+                    doctors_required: reqs.doctors,
+                    nurses_required: reqs.nurses,
+                    receptionists_required: reqs.receptionists,
+                  },
+                  client
+                );
+                status = "merged";
+                reason = `Merged with existing shift record (external_id ${externalId})`;
+                resultingId = updated?.id ?? existingShift.id;
+                mergedCount++;
+              } else {
+                const newShift = await shiftsRepo.create(
+                  {
+                    external_id: externalId,
+                    starts_at: startsAt,
+                    ends_at: endsAt,
+                    doctors_required: reqs.doctors,
+                    nurses_required: reqs.nurses,
+                    receptionists_required: reqs.receptionists,
+                    created_by: importedBy ?? null,
+                  },
+                  client
+                );
+                status = "accepted";
+                resultingId = newShift.id;
+                acceptedCount++;
+              }
+
+              if (status !== "rejected") {
+                externalIdsSeenThisBatch.add(externalId);
+              }
             }
-
-            const newShift = await shiftsRepo.create(
-              {
-                starts_at: startsAt,
-                ends_at: endsAt,
-                doctors_required: reqs.doctors,
-                nurses_required: reqs.nurses,
-                receptionists_required: reqs.receptionists,
-                created_by: importedBy ?? null,
-              },
-              client
-            );
-            status = "accepted";
-            resultingId = newShift.id;
-            acceptedCount++;
           }
         }
 

@@ -1,4 +1,4 @@
-import { shiftsRepo, shiftClaimsRepo, ShiftEntity, CreateShiftInput, ShiftClaimWithUser } from "@/lib/db";
+import { shiftsRepo, shiftClaimsRepo, queryOne, ShiftEntity, CreateShiftInput, ShiftClaimWithUser } from "@/lib/db";
 
 export interface ShiftWithClaims extends ShiftEntity {
   claims: ShiftClaimWithUser[];
@@ -77,7 +77,12 @@ export const shiftsService = {
 
     const { startsAt, endsAt } = calculateShiftTimestamps(payload.date, payload.startTime, payload.endTime);
 
+    const { nextval: externalId } = (await queryOne<{ nextval: number }>(
+      `SELECT nextval('shifts_external_id_seq')`
+    ))!;
+
     return shiftsRepo.create({
+      external_id: externalId,
       starts_at: startsAt,
       ends_at: endsAt,
       doctors_required: doctors,

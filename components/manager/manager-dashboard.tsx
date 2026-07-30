@@ -429,7 +429,10 @@ export function ManagerDashboard() {
                       className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors"
                     >
                       <td className="py-4 px-4 font-medium">
-                        <div>{dateStr}</div>
+                        <div className="flex items-center gap-2">
+                          <span>{dateStr}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">#{shift.external_id}</span>
+                        </div>
                         <div className="text-xs text-slate-500">
                           {startStr} – {endStr} {isOvernight ? "(+1 day)" : ""}
                         </div>

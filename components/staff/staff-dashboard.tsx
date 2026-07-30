@@ -262,7 +262,7 @@ export function StaffDashboard() {
                     <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
                       <span className="font-bold text-base">{dateStr}</span>
                       <span className="text-xs text-slate-500 font-mono">
-                        ID: {shift.id.substring(0, 8)}
+                        #{shift.external_id}
                       </span>
                     </div>
 

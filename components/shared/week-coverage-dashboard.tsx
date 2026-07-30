@@ -176,9 +176,12 @@ export function WeekCoverageDashboard({
                     key={shift.id}
                     className={`rounded-lg border p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${statusColorClasses(metrics.status)}`}
                   >
-                    <div className="sm:w-40 shrink-0">
+                    <div className="sm:w-44 shrink-0">
                       <div className="font-bold text-sm">
                         {startStr} – {endStr} {isOvernight && <span className="text-[10px] font-medium">(+1 day)</span>}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                        #{shift.external_id}
                       </div>
                       <span className="inline-block mt-1 px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-white/60 dark:bg-black/20">
                         {metrics.status}

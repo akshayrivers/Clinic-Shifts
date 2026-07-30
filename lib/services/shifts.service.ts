@@ -77,9 +77,14 @@ export const shiftsService = {
 
     const { startsAt, endsAt } = calculateShiftTimestamps(payload.date, payload.startTime, payload.endTime);
 
-    const { nextval: externalId } = (await queryOne<{ nextval: number }>(
-      `SELECT nextval('shifts_external_id_seq')`
-    ))!;
+    let externalId: number;
+    try {
+      const result = await queryOne<{ nextval: number }>(`SELECT nextval('shifts_external_id_seq')`);
+      externalId = result!.nextval;
+    } catch {
+      const maxResult = await queryOne<{ max: number | null }>(`SELECT MAX(external_id) FROM shifts`);
+      externalId = (maxResult?.max ?? 0) + 1;
+    }
 
     return shiftsRepo.create({
       external_id: externalId,

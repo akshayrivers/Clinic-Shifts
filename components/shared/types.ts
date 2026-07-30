@@ -13,6 +13,7 @@ export interface ShiftClaim {
 
 export interface ShiftItem {
   id: string;
+  external_id: number;
   starts_at: string;
   ends_at: string;
   doctors_required: number;

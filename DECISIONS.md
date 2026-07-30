@@ -149,19 +149,73 @@ This pair of tables exists purely to make the Import Report page (manager-only, 
 
 ### I thought of api's through solving the main issues that we could have
 
-## Importing data from .csv files 
+## Importing data from .csv files
+
+One `importService` with two entry points (`importStaffCSV` / `importShiftsCSV`), both called from the same place whether it's the seed script (`scripts/seed-import.ts`) or a manager hitting `POST /api/import` with an uploaded file. That was non-negotiable per the brief ("must use the same import logic"), so I never let the upload route touch a parsed row directly — it just reads the file text and hands it to the same service the seed uses.
+
+Both import functions run inside a single DB transaction per batch (`withTransaction`), and every row — accepted, merged, or rejected — gets written to `import_rows` before the function returns. A few things worth calling out about how the actual implementation ended up differing from what I originally sketched above:
+
+- **Dates aren't rejected when ambiguous — I made a fixed judgment call instead.** Earlier in this doc I said I'd reject ambiguous slash/dash dates. In the real implementation I didn't do that: `DD/MM/YYYY` (slash) is always parsed day-first, `MM-DD-YYYY` (dash) is always parsed month-first, and only genuinely impossible dates (`2026-02-30`, day 13 in a month position) get rejected. I went back and forth on this, but decided a small clinic's real spreadsheet almost certainly used one consistent convention per separator, and rejecting every slash-date because *some* dash-date elsewhere in the file could theoretically be ambiguous felt like it would reject far more good data than it saved me from bad data. This is a judgment call, not a certainty — I'd flag it to a real clinic and ask them to confirm the convention rather than assume it.
+- **`12:00–12:00` is not rejected — it's treated as a 24-hour shift.** I'd originally planned to reject equal start/end times as ambiguous. When I actually got to writing `calculateShiftTimestamps`, I changed my mind: the same "roll over midnight if `end <= start`" rule I already needed for overnight shifts (22:00→06:00) handles this case for free, and a 24-hour shift is a real thing a small clinic could plausibly schedule (on-call coverage). So `12:00` to `12:00` becomes a 24-hour shift rather than a rejected row. I'm noting this here because it's a real inconsistency with what I said earlier in this doc, and it's the kind of assumption I'd want a manager to sanity-check on the Import Report page rather than silently trust.
+- **Duplicate `staff_id` / `shift_id` are merged (updated in place), not skipped.** The row is still logged with status `merged` and a reason, and the existing record's fields get overwritten with the newer row's values. I chose "last write wins, but logged" over "first write wins, duplicate discarded" because a duplicate row later in the file is more likely to be a *correction* (someone fixed a typo and re-exported) than noise — but either way, the report shows exactly what happened so a manager can catch it if I guessed wrong.
+- **Unrecognized requirement keys or genuinely unparseable strings (`"two nurses and a doctor"`) are rejected, not defaulted.** But a recognized key that's just missing from the string (`nurses=1` with no `doctors=`/`receptionists=` at all) defaults the missing roles to `0` rather than rejecting the whole row — I only reject when I can't confidently parse *something*, not when a role simply isn't mentioned.
+- A shift row with all-zero requirements (`nurses=0;doctors=0;receptionists=0`) is rejected outright — a shift that needs nobody isn't a shift.
+
+## Shift claims
+
+`POST /api/shifts/:id/claim` and `DELETE /api/shifts/:id/claim` are the only two endpoints here, and they're intentionally the same route for both self-claim and manager-assign, per the `claimed_by` design from the schema section above. The authorization split happens right at the route, before the service is ever called:
+
+- If the caller is `staff`, the target user is always themselves — `body.userId` is simply ignored for non-managers, not validated-and-rejected. I did it this way so a staff member can't even *attempt* to assign someone else and get a "here's why not" error that leaks information about other staff's schedules; the request just quietly claims for themselves.
+- If the caller is `manager` and passes a `userId`, that's who gets assigned. If they don't pass one, it falls back to self-claim, so the same endpoint works for a manager claiming a shift for themselves too.
+
+Inside `shiftClaimService.claimShift`, everything happens in one transaction, in this order: lock the shift row (`SELECT ... FOR UPDATE`), validate the target user exists and is staff with a profession, check for a duplicate claim, check profession capacity (count of existing claims for that profession vs. the shift's requirement), then check overlap against every other shift that user has already claimed. Any failure throws a typed `ShiftClaimError` with a `code` (`CAPACITY_REACHED`, `OVERLAPPING_SHIFT`, `DUPLICATE_CLAIM`, etc.) that the route maps to the right HTTP status — 409 for the "someone beat you to it" / conflict cases, 404 for not-found, 400 otherwise. Unclaiming follows the same "staff can only act on themselves, manager can act on anyone" rule, enforced in the service rather than trusted from the client.
+
+## Editing the shifts
+
+This is the part of the brief I'm least happy with, so I want to be straight about it rather than write around it. `updateShift` currently recalculates `starts_at`/`ends_at` and the three requirement counts and writes them straight to the `shifts` row — **it does not re-check existing claims against the new values.** Concretely, today, a manager could:
+
+- Shrink `nurses_required` from 3 to 1 on a shift that already has 2 nurses claimed, leaving it over capacity with no warning.
+- Change a shift's time so it now overlaps with something one of its claimants already has elsewhere, with no re-validation and no one notified.
+
+The brief explicitly calls this out ("must be re-validated if a shift's time is edited after being claimed"), and I did not get to it. I noticed it late enough in the four days that I made the call to ship a working claim/overlap engine for *creation* and put the edit-time re-validation on the "what I'd do differently" list at the bottom of this doc, rather than rush a half-tested version of it in. If I had more time, my plan would be: on `updateShift`, run the same overlap + capacity checks used in `claimShift` against every existing claim on that shift inside the same transaction as the update, and surface any now-invalid claims back to the manager as a confirmation step ("this change would bump 2 nurses off this shift — proceed anyway?") rather than silently dropping people or silently allowing over-capacity.
+
+Deleting a shift asks for a generic confirmation on the frontend ("Are you sure you want to delete this shift?"), but it's not claim-aware — it doesn't tell the manager how many people are claimed on it or who they are before they confirm. The server-side delete is unconditional and relies on the `shift_claims` foreign key to clean up any claims (cascade). I decided *what* happens (claims disappear along with the shift) without building the richer "this shift has 2 nurses claimed — are you sure?" confirmation a real manager would want.
+
+## Business Logic flow
+
+The one rule I kept coming back to while building this: **the same validation path handles both staff self-claim and manager-assign**, and **the same import function handles both the automatic seed and a manager's uploaded CSV.** Every time I was tempted to write a manager-only shortcut that skipped a check "because managers should be trusted," I stopped myself — the brief is explicit that manager assignment must obey the same capacity/overlap rules as a self-claim, and the only way I trust myself not to accidentally violate that is to make it structurally impossible by routing both through one function.
+
+For concurrency specifically, the actual mechanism is: `SELECT ... FOR UPDATE` on the target shift row inside a transaction, so two simultaneous claim requests for the same shift serialize instead of racing — the second request's `FOR UPDATE` blocks until the first transaction commits or rolls back, and by the time it acquires the lock it re-reads the (now-current) claim count. The `unique(shift_id, user_id)` constraint on `shift_claims` is the backstop underneath that, in case I ever get the transaction boundaries wrong somewhere.
+
+For live updates (the stretch goal), I went with Supabase Realtime's `postgres_changes` subscription on the `shifts` and `shift_claims` tables, debounced to at most once per 500ms, which just triggers a refetch of whatever the client is currently viewing rather than trying to patch individual rows of client state. I chose "cheap refetch on any change" over "diff and patch the exact row" because the data volume here is small (a clinic's shifts for a week or two), and refetch-on-notify is a lot less code to get wrong than fine-grained client-side state reconciliation — I'd reconsider this if the dashboard needed to handle hundreds of shifts at once.
 
 
-## Shift claims 
+## Authentication & roles
 
+I stuck with the plan from the top of this doc: NextAuth with a Credentials provider, and the login form asks for **staff code + email + password**, not just email + password. That third field is doing real work, not just decoration — since the CSV has legitimate cases of two different `staff_id`s sharing one email (the Hiro Iyer / J. Placeholder example above), email alone can't uniquely identify who's logging in. Staff code is the actual account identifier; email is closer to a contact field that happens to also be part of the credential check.
 
-## Editing the shitfts
+Every imported user gets the same default password (`clinic123`, bcrypt-hashed once and reused rather than re-hashed per user, since it's identical for all of them at import time — that's purely a perf shortcut, not a security one). There's no forced-password-change or forgot-password flow, which is a real gap for anything beyond a take-home — in a real deployment I'd want the email-verification-then-magic-link flow I mentioned early on in this doc, but I stand by not building it here.
 
-## Business Logic flow 
+Role/route protection is `middleware.ts`, not just client-side hiding: it reads the JWT via `getToken`, redirects unauthenticated requests to `/login`, and redirects `staff` away from `/manager/*` and `manager` away from `/staff/*` (both land back on `/dashboard` with an `AccessDenied` query param rather than a raw 403 page). The actual API routes double-check role server-side too (`requireManager()` on shift create/edit/delete, the manager-vs-self check inside the claim service) — the middleware is a UX nicety for redirecting people to the right place, not the thing actually enforcing the rule.
 
+## Coverage dashboard
 
+Week-at-a-glance is a single `WeekCoverageDashboard` component shared between... well, currently just the manager view, since staff have their own simpler view of shifts they can claim. Each shift shows a status derived from claims vs. requirements (empty / partial / full) and, for anything not full, which specific roles are still short (e.g. "needs 1 more nurse") rather than just a generic "partially staffed" badge — that's the part of the brief I wanted to make sure was genuinely useful and not just a color chip. Week navigation is prev/next plus a date jump, so a manager isn't stuck paging through weeks one at a time to get to a specific date.
 
+For responsiveness (the brief calls this out specifically): the week grid is a single column on small screens and only collapses into the full 7-column week layout at the `md` breakpoint, using Tailwind's grid classes rather than a separate mobile component. I didn't build a from-scratch design system for this — the priority was function over form, as the brief said up front — but I did make sure the coverage view specifically doesn't just horizontally overflow on a phone, since that's the one screen most likely to actually get checked for responsiveness.
 
+## Frontend, generally
 
-# Frontend 
-I will not go into much of the detials here, I have only tried to focus much more on the basic functionality..
+I really did keep this minimal, on purpose, since the brief was explicit that "the focus would be more on the functionality rather than UI." Three real views: a staff dashboard (see shifts, claim/unclaim, see your own schedule), a manager dashboard (the coverage view, create/edit/delete shifts, search/filter by role and staffing status), and a manager-only Import Report page. Toasts for success/error feedback on actions like claim/unclaim/create/delete, so a rejected claim (capacity reached, overlapping shift) shows up as an actual readable message instead of a silent failure — that mattered to me since "rejected with a clear error message" is a literal requirement in the brief, not just good practice.
+
+## Known gaps / things I know are inconsistent right now
+
+Being upfront about the state of things beyond the edit-revalidation gap already covered above:
+
+- **The README is still the default `create-next-app` boilerplate.** It doesn't yet have the stack summary, one-command local setup, test command, or seeded login credentials the brief asks for. This needs to be rewritten before submission — it's the one deliverable I let slip furthest behind the actual code.
+- **The initial database schema isn't checked into the repo as SQL.** I only have one incremental migration file (`scripts/migration-003-shifts-external-id.sql`) tracked; the base tables were set up directly against Supabase. That's fine for a solo take-home but isn't something I'd defend for a real project — the base schema should be a migration too, not tribal knowledge in the Supabase dashboard.
+- **CSV parsing is hand-rolled** (`parseCSV` does a naive split on commas/newlines) rather than using a proper CSV library, so a value containing a comma or an embedded newline inside quotes would break it. Neither `staff.csv` nor `shifts.csv` seems to need that, but a real "manager uploads their own CSV" feature should probably not assume that.
+
+## One thing I'd do differently with more time
+
+If I had another pass at this, I'd build the edit-time re-validation described above before anything else — it's the one place where the system currently *lets you get into a bad state silently* rather than just being missing a nice-to-have. Everything else on this list (README, richer delete confirmation, a real CSV parser) is a matter of finishing polish; the edit-revalidation gap is the one that could actually let a shift go over capacity or double-book a staff member without anyone noticing, which is exactly the class of bug this whole brief is about preventing.

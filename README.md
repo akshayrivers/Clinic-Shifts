@@ -118,8 +118,8 @@ Base URL: `http://localhost:3000`
 | GET | `/api/shifts` | Any authenticated user | — | List all shifts with their current claims. |
 | POST | `/api/shifts` | Manager | `{ date, startTime, endTime, doctorsRequired?, nursesRequired?, receptionistsRequired? }` | Create a shift. Rejects if requirements are negative or all zero. |
 | GET | `/api/shifts/:id` | Any authenticated user | — | Get one shift with its claims. |
-| PUT | `/api/shifts/:id` | Manager | Same fields as create, all optional | Edit a shift. **Does not currently re-validate existing claims against the new values — see `DECISIONS.md`.** |
-| DELETE | `/api/shifts/:id` | Manager | — | Delete a shift (claims cascade with it). |
+| PUT | `/api/shifts/:id` | Manager | Same fields as create, all optional, plus `force?: boolean` | Edit a shift. If the change would leave a claimed profession over capacity, or would double-book a claimant's time elsewhere, responds `409` with a `violations` list instead of saving. Resubmitting with `force: true` proceeds: overlap violations get the offending claim automatically removed (and reported back in `removedClaims`); over-capacity violations are allowed through as a knowing override and don't remove anyone. |
+| DELETE | `/api/shifts/:id` | Manager | — | Delete a shift (claims cascade with it). The frontend confirmation shows how many staff are currently assigned before deleting, but the server-side delete itself is unconditional once called. |
 
 ### Shift Claims — `/api/shifts/:id/claim`
 
@@ -161,7 +161,7 @@ users
 
 shifts
 ├── id (UUID, PK)
-├── external_id (INTEGER, unique)     ← original shift_id from the CSV, or a generated sequence value for shifts created in-app
+├── external_id (INTEGER, unique)     ← original shift_id from the CSV, or a generated sequence value for shifts created in-app (falls back to MAX(external_id)+1 if the sequence itself is ever missing). Shown in the UI as `#<external_id>` on both dashboards instead of the raw UUID.
 ├── starts_at, ends_at (TIMESTAMPTZ)  ← collapsed from date+start+end so overnight shifts need no special-casing
 ├── doctors_required, nurses_required, receptionists_required (INTEGER)
 ├── series_id (nullable, FK)          ← recurring-shift stretch goal
@@ -223,7 +223,7 @@ Every other row that survives import from `staff.csv` logs in the same way: thei
 
 See `DECISIONS.md` for the full reasoning, but in short:
 
-- Editing a shift's time or requirements does not re-validate it against existing claims — a shift can currently be edited into an over-capacity or double-booked state without warning.
+- A manager could technically self-claim a shift via a direct API call — the assign picker in the UI never offers a manager as an option, but that's a frontend choice, not a server-enforced rule yet.
 - No persisted "view past import batches" screen — only the result of the import that just ran is shown.
 - No self-serve password reset; every imported account shares one default password.
 - CSV parsing is hand-rolled (naive comma/newline split), not a proper CSV library.

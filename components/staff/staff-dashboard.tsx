@@ -5,6 +5,15 @@ import { useSession } from "next-auth/react";
 import { useRealtimeShifts } from "@/hooks/use-realtime-shifts";
 import { ShiftItem } from "@/components/shared/types";
 import { WeekCoverageDashboard } from "@/components/shared/week-coverage-dashboard";
+import { ToastContainer } from "@/components/toast-container";
+
+interface Toast {
+  id: string;
+  type: "success" | "error";
+  message: string;
+}
+
+let toastCounter = 0;
 
 export function StaffDashboard() {
   const { data: session } = useSession();
@@ -16,9 +25,15 @@ export function StaffDashboard() {
     "available",
   );
 
-  // Feedback validation message
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const addToast = useCallback((type: "success" | "error", message: string) => {
+    const id = String(++toastCounter);
+    setToasts((prev) => [...prev, { id, type, message }]);
+  }, []);
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const [actioningShiftId, setActioningShiftId] = useState<string | null>(null);
 
   const fetchShifts = useCallback(async (showLoading = true) => {
@@ -33,11 +48,11 @@ export function StaffDashboard() {
         (data.shifts || []).length,
       );
     } catch (err: unknown) {
-      setValidationError((err as Error).message);
+      addToast("error", (err as Error).message);
     } finally {
       if (showLoading) setIsInitialLoading(false);
     }
-  }, []);
+  }, [addToast]);
 
   useEffect(() => {
     fetchShifts();
@@ -81,8 +96,6 @@ export function StaffDashboard() {
   // Claim Shift Handler
   const handleClaimShift = async (shiftId: string) => {
     setActioningShiftId(shiftId);
-    setValidationError(null);
-    setSuccessMessage(null);
 
     try {
       const res = await fetch(`/api/shifts/${shiftId}/claim`, {
@@ -96,10 +109,10 @@ export function StaffDashboard() {
         throw new Error(data.error || "Failed to claim shift");
       }
 
-      setSuccessMessage("Shift claimed successfully!");
+      addToast("success", "Shift claimed successfully!");
       fetchShifts(false);
     } catch (err: unknown) {
-      setValidationError((err as Error).message);
+      addToast("error", (err as Error).message);
     } finally {
       setActioningShiftId(null);
     }
@@ -108,8 +121,6 @@ export function StaffDashboard() {
   // Unclaim Shift Handler
   const handleUnclaimShift = async (shiftId: string) => {
     setActioningShiftId(shiftId);
-    setValidationError(null);
-    setSuccessMessage(null);
 
     try {
       const res = await fetch(`/api/shifts/${shiftId}/claim`, {
@@ -121,10 +132,10 @@ export function StaffDashboard() {
         throw new Error(data.error || "Failed to unclaim shift");
       }
 
-      setSuccessMessage("Shift unclaimed successfully.");
+      addToast("success", "Shift unclaimed successfully.");
       fetchShifts(false);
     } catch (err: unknown) {
-      setValidationError((err as Error).message);
+      addToast("error", (err as Error).message);
     } finally {
       setActioningShiftId(null);
     }
@@ -172,36 +183,7 @@ export function StaffDashboard() {
         </div>
       </div>
 
-      {/* Validation / Success Notifications */}
-      {validationError && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm font-semibold flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">⚠️</span>
-            <span>{validationError}</span>
-          </div>
-          <button
-            onClick={() => setValidationError(null)}
-            className="text-rose-500 hover:text-rose-700 font-bold"
-          >
-            &times;
-          </button>
-        </div>
-      )}
-
-      {successMessage && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-semibold flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">✅</span>
-            <span>{successMessage}</span>
-          </div>
-          <button
-            onClick={() => setSuccessMessage(null)}
-            className="text-emerald-500 hover:text-emerald-700 font-bold"
-          >
-            &times;
-          </button>
-        </div>
-      )}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Week Coverage Dashboard — same shared component the manager view uses */}
       <WeekCoverageDashboard

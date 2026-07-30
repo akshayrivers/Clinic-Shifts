@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRealtimeShifts } from "@/hooks/use-realtime-shifts";
 import { ShiftItem, getShiftStaffingMetrics } from "@/components/shared/types";
 import { WeekCoverageDashboard } from "@/components/shared/week-coverage-dashboard";
+import { ToastContainer } from "@/components/toast-container";
 
 export interface StaffUser {
   id: string;
@@ -15,10 +16,26 @@ export interface StaffUser {
   profession: "doctor" | "nurse" | "receptionist" | null;
 }
 
+interface Toast {
+  id: string;
+  type: "success" | "error";
+  message: string;
+}
+
+let toastCounter = 0;
+
 export function ManagerDashboard() {
   const [shifts, setShifts] = useState<ShiftItem[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const addToast = useCallback((type: "success" | "error", message: string) => {
+    const id = String(++toastCounter);
+    setToasts((prev) => [...prev, { id, type, message }]);
+  }, []);
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // Filters & Search State
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,9 +62,6 @@ export function ManagerDashboard() {
   const [assigningShiftId, setAssigningShiftId] = useState<string | null>(null);
   const [assignUserId, setAssignUserId] = useState("");
   const [assignSearchQuery, setAssignSearchQuery] = useState("");
-  const [assignActionMessage, setAssignActionMessage] = useState<string | null>(
-    null,
-  );
 
   // Full staff directory, fetched once — powers the "Assign Staff" picker so
   // managers select a real person instead of typing a raw UUID.
@@ -89,11 +103,11 @@ export function ManagerDashboard() {
         data[0] ? getShiftStaffingMetrics(data[0]).status : null,
       );
     } catch (err: unknown) {
-      setError((err as Error).message);
+      addToast("error", (err as Error).message);
     } finally {
       if (showLoading) setIsInitialLoading(false);
     }
-  }, []);
+  }, [addToast]);
 
   useEffect(() => {
     fetchShifts();
@@ -177,7 +191,6 @@ export function ManagerDashboard() {
   // Shift Create/Edit Handler
   const handleSaveShift = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
 
     try {
       const url = editingShiftId
@@ -196,9 +209,10 @@ export function ManagerDashboard() {
 
       setIsModalOpen(false);
       setEditingShiftId(null);
+      addToast("success", "Shift saved successfully!");
       fetchShifts(false);
     } catch (err: unknown) {
-      setError((err as Error).message);
+      addToast("error", (err as Error).message);
     }
   };
 
@@ -211,9 +225,10 @@ export function ManagerDashboard() {
         const data = await res.json();
         throw new Error(data.error || "Failed to delete shift");
       }
+      addToast("success", "Shift deleted successfully.");
       fetchShifts(false);
     } catch (err: unknown) {
-      setError((err as Error).message);
+      addToast("error", (err as Error).message);
     }
   };
 
@@ -222,7 +237,6 @@ export function ManagerDashboard() {
     e.preventDefault();
     if (!assigningShiftId || !assignUserId.trim()) return;
 
-    setAssignActionMessage(null);
     try {
       const res = await fetch(`/api/shifts/${assigningShiftId}/claim`, {
         method: "POST",
@@ -234,10 +248,10 @@ export function ManagerDashboard() {
       if (!res.ok) throw new Error(data.error || "Failed to assign staff");
 
       setAssignUserId("");
-      setAssignActionMessage("Staff member assigned successfully!");
+      addToast("success", "Staff member assigned successfully!");
       fetchShifts(false);
     } catch (err: unknown) {
-      setAssignActionMessage(`Error: ${(err as Error).message}`);
+      addToast("error", (err as Error).message);
     }
   };
 
@@ -253,9 +267,10 @@ export function ManagerDashboard() {
         throw new Error(data.error || "Failed to remove staff");
       }
 
+      addToast("success", "Staff unassigned successfully.");
       fetchShifts(false);
     } catch (err: unknown) {
-      setError((err as Error).message);
+      addToast("error", (err as Error).message);
     }
   };
 
@@ -300,11 +315,7 @@ export function ManagerDashboard() {
         </div>
       </div>
 
-      {error && (
-        <div className="p-4 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-sm font-medium">
-          {error}
-        </div>
-      )}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Week Coverage Dashboard — shared with the staff view */}
       <WeekCoverageDashboard
@@ -315,7 +326,6 @@ export function ManagerDashboard() {
               setAssigningShiftId(shift.id);
               setAssignUserId("");
               setAssignSearchQuery("");
-              setAssignActionMessage(null);
             }}
             className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-2.5 py-1.5 rounded transition-colors whitespace-nowrap"
           >
@@ -503,7 +513,6 @@ export function ManagerDashboard() {
                             setAssigningShiftId(shift.id);
                             setAssignUserId("");
                             setAssignSearchQuery("");
-                            setAssignActionMessage(null);
                           }}
                           className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold px-2.5 py-1.5 rounded transition-colors"
                         >
@@ -695,18 +704,6 @@ export function ManagerDashboard() {
                 {getShiftStaffingMetrics(assigningShift).missingText}
               </div>
             </div>
-
-            {assignActionMessage && (
-              <div
-                className={`mb-4 p-3 rounded-lg text-xs font-medium ${
-                  assignActionMessage.startsWith("Error")
-                    ? "bg-rose-50 text-rose-700"
-                    : "bg-emerald-50 text-emerald-700"
-                }`}
-              >
-                {assignActionMessage}
-              </div>
-            )}
 
             <form onSubmit={handleAssignStaff} className="space-y-4">
               <div>

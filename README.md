@@ -250,7 +250,7 @@ After `npm run seed`:
 
 | Role | Staff Code | Email | Password |
 |------|-----------|-------|----------|
-| Manager | `9001` | `manager@clinic.com` | `manager123` |
+| Manager | `9001` | `manager2@clinic.com` | `manager123` |
 | Staff (doctor) | `121` | `marcus.whitfield@clinicmail.test` | `clinic123` |
 | Staff (nurse) | `131` | `anya.haddad@clinicmail.test` | `clinic123` |
 | Staff (receptionist) | `120` | `ben.marchand@clinicmail.test` | `clinic123` |

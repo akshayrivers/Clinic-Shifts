@@ -139,4 +139,13 @@ export const shiftClaimsRepo = {
     );
     return rows.length > 0;
   },
+
+  async deleteByShiftId(shiftId: string, executor?: QueryExecutor): Promise<boolean> {
+    const rows = await query<{ id: string }>(
+      `DELETE FROM shift_claims WHERE shift_id = $1 RETURNING id`,
+      [shiftId],
+      executor
+    );
+    return rows.length > 0;
+  },
 };

@@ -58,6 +58,22 @@ export function ManagerDashboard() {
     receptionistsRequired: 1,
   });
 
+  // Series Modal state
+  const [isSeriesModalOpen, setIsSeriesModalOpen] = useState(false);
+  const [seriesList, setSeriesList] = useState<
+    { id: string; days_of_week: number[]; start_time: string; end_time: string; doctors_required: number; nurses_required: number; receptionists_required: number; until_date: string; created_at: string }[]
+  >([]);
+  const [seriesFormData, setSeriesFormData] = useState({
+    startDate: "",
+    untilDate: "",
+    startTime: "08:00",
+    endTime: "16:00",
+    daysOfWeek: [] as number[],
+    doctorsRequired: 1,
+    nursesRequired: 2,
+    receptionistsRequired: 1,
+  });
+
   // Assignment Modal state
   const [assigningShiftId, setAssigningShiftId] = useState<string | null>(null);
   const [assignUserId, setAssignUserId] = useState("");
@@ -109,9 +125,21 @@ export function ManagerDashboard() {
     }
   }, [addToast]);
 
+  const fetchSeries = useCallback(async () => {
+    try {
+      const res = await fetch("/api/shift-series");
+      if (!res.ok) return;
+      const data = await res.json();
+      setSeriesList(data.series || []);
+    } catch {
+      // silent
+    }
+  }, []);
+
   useEffect(() => {
     fetchShifts();
-  }, [fetchShifts]);
+    fetchSeries();
+  }, [fetchShifts, fetchSeries]);
 
   // Realtime update callback — refresh without loading flash
   useRealtimeShifts(() => {
@@ -267,6 +295,44 @@ export function ManagerDashboard() {
     }
   };
 
+  // Create Series Handler
+  const handleCreateSeries = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("/api/shift-series", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(seriesFormData),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create series");
+
+      setIsSeriesModalOpen(false);
+      addToast("success", `Series created! Generated ${data.count} shifts.`);
+      fetchShifts(false);
+      fetchSeries();
+    } catch (err: unknown) {
+      addToast("error", (err as Error).message);
+    }
+  };
+
+  // Delete Series Handler
+  const handleDeleteSeries = async (id: string, shiftCount: number) => {
+    if (!confirm(`Delete this series and all ${shiftCount} linked shifts?`)) return;
+    try {
+      const res = await fetch(`/api/shift-series/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete series");
+      }
+      addToast("success", "Series and linked shifts deleted.");
+      fetchShifts(false);
+      fetchSeries();
+    } catch (err: unknown) {
+      addToast("error", (err as Error).message);
+    }
+  };
+
   // Assign Staff Handler
   const handleAssignStaff = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -340,6 +406,24 @@ export function ManagerDashboard() {
             className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm px-4 py-2.5 rounded-lg shadow-sm transition-all"
           >
             + Create New Shift
+          </button>
+          <button
+            onClick={() => {
+              setSeriesFormData({
+                startDate: new Date().toISOString().split("T")[0],
+                untilDate: "",
+                startTime: "08:00",
+                endTime: "16:00",
+                daysOfWeek: [],
+                doctorsRequired: 1,
+                nursesRequired: 2,
+                receptionistsRequired: 1,
+              });
+              setIsSeriesModalOpen(true);
+            }}
+            className="bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm px-4 py-2.5 rounded-lg shadow-sm transition-all"
+          >
+            + Create Recurring Series
           </button>
           <Link
             href="/manager/import"
@@ -467,6 +551,11 @@ export function ManagerDashboard() {
                         <div className="flex items-center gap-2">
                           <span>{dateStr}</span>
                           <span className="text-[10px] text-slate-400 font-mono">#{shift.external_id}</span>
+                          {shift.series_id && (
+                            <span className="text-[10px] bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 px-1.5 py-0.5 rounded font-semibold">
+                              Series
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-slate-500">
                           {startStr} – {endStr} {isOvernight ? "(+1 day)" : ""}
@@ -592,6 +681,66 @@ export function ManagerDashboard() {
         )}
       </div>
 
+      {/* Series List */}
+      {seriesList.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm space-y-4">
+          <div>
+            <h2 className="text-lg font-bold">
+              Recurring Series ({seriesList.length})
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Series generate shifts on selected days of the week.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr className="bg-slate-100 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-3 px-4">Schedule</th>
+                  <th className="py-3 px-4">Time</th>
+                  <th className="py-3 px-4">Requirements</th>
+                  <th className="py-3 px-4">Until</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {seriesList.map((s) => {
+                  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                  const daysStr = s.days_of_week.map((d: number) => dayLabels[d]).join(", ");
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="py-4 px-4 font-medium">{daysStr}</td>
+                      <td className="py-4 px-4">
+                        {s.start_time} – {s.end_time}
+                      </td>
+                      <td className="py-4 px-4 text-xs space-y-1">
+                        <div>Drs: {s.doctors_required}</div>
+                        <div>Nrs: {s.nurses_required}</div>
+                        <div>Rec: {s.receptionists_required}</div>
+                      </td>
+                      <td className="py-4 px-4 text-xs">
+                        {new Date(s.until_date).toISOString().split("T")[0]}
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            const shiftCount = shifts.filter((sh) => sh.series_id === s.id).length;
+                            handleDeleteSeries(s.id, shiftCount);
+                          }}
+                          className="bg-rose-50 hover:bg-rose-100 dark:bg-rose-950 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300 text-xs font-semibold px-2.5 py-1.5 rounded transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Create / Edit Shift Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -712,6 +861,170 @@ export function ManagerDashboard() {
                   className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-sm"
                 >
                   Save Shift
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Recurring Series Modal */}
+      {isSeriesModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 w-full max-w-md shadow-2xl">
+            <h2 className="text-xl font-bold mb-4">Create Recurring Series</h2>
+
+            <form onSubmit={handleCreateSeries} className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-semibold mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={seriesFormData.startDate}
+                    onChange={(e) =>
+                      setSeriesFormData({ ...seriesFormData, startDate: e.target.value })
+                    }
+                    className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Until Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={seriesFormData.untilDate}
+                    onChange={(e) =>
+                      setSeriesFormData({ ...seriesFormData, untilDate: e.target.value })
+                    }
+                    className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-semibold mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    required
+                    value={seriesFormData.startTime}
+                    onChange={(e) =>
+                      setSeriesFormData({ ...seriesFormData, startTime: e.target.value })
+                    }
+                    className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">End Time</label>
+                  <input
+                    type="time"
+                    required
+                    value={seriesFormData.endTime}
+                    onChange={(e) =>
+                      setSeriesFormData({ ...seriesFormData, endTime: e.target.value })
+                    }
+                    className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1">Days of Week</label>
+                <div className="flex flex-wrap gap-2">
+                  {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((name, idx) => (
+                    <label
+                      key={idx}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 cursor-pointer has-[:checked]:bg-indigo-50 dark:has-[:checked]:bg-indigo-950 has-[:checked]:border-indigo-500"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={seriesFormData.daysOfWeek.includes(idx)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSeriesFormData({
+                              ...seriesFormData,
+                              daysOfWeek: [...seriesFormData.daysOfWeek, idx],
+                            });
+                          } else {
+                            setSeriesFormData({
+                              ...seriesFormData,
+                              daysOfWeek: seriesFormData.daysOfWeek.filter((d) => d !== idx),
+                            });
+                          }
+                        }}
+                        className="accent-indigo-600"
+                      />
+                      <span className="text-xs font-medium">{name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1 text-xs">Doctors</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={seriesFormData.doctorsRequired}
+                    onChange={(e) =>
+                      setSeriesFormData({
+                        ...seriesFormData,
+                        doctorsRequired: parseInt(e.target.value, 10) || 0,
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-xs">Nurses</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={seriesFormData.nursesRequired}
+                    onChange={(e) =>
+                      setSeriesFormData({
+                        ...seriesFormData,
+                        nursesRequired: parseInt(e.target.value, 10) || 0,
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-xs">Receptionists</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={seriesFormData.receptionistsRequired}
+                    onChange={(e) =>
+                      setSeriesFormData({
+                        ...seriesFormData,
+                        receptionistsRequired: parseInt(e.target.value, 10) || 0,
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsSeriesModalOpen(false)}
+                  className="px-4 py-2 text-slate-600 dark:text-slate-400 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-sm"
+                >
+                  Create Series
                 </button>
               </div>
             </form>

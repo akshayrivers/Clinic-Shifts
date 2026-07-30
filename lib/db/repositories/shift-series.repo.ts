@@ -2,6 +2,16 @@ import { query, queryOne, QueryExecutor } from "../client";
 import { ShiftSeriesEntity, CreateShiftSeriesInput } from "../types";
 
 export const shiftSeriesRepo = {
+  async findAll(executor?: QueryExecutor): Promise<ShiftSeriesEntity[]> {
+    return query<ShiftSeriesEntity>(
+      `SELECT id, days_of_week, start_time, end_time, doctors_required, nurses_required, receptionists_required, until_date, created_by, created_at 
+       FROM shift_series 
+       ORDER BY created_at DESC`,
+      [],
+      executor
+    );
+  },
+
   async findById(id: string, executor?: QueryExecutor): Promise<ShiftSeriesEntity | null> {
     return queryOne<ShiftSeriesEntity>(
       `SELECT id, days_of_week, start_time, end_time, doctors_required, nurses_required, receptionists_required, until_date, created_by, created_at 

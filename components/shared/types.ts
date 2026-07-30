@@ -19,6 +19,7 @@ export interface ShiftItem {
   doctors_required: number;
   nurses_required: number;
   receptionists_required: number;
+  series_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

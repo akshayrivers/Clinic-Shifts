@@ -137,6 +137,26 @@ export const shiftsRepo = {
     );
     return rows.length > 0;
   },
+  async findBySeriesId(seriesId: string, executor?: QueryExecutor): Promise<ShiftEntity[]> {
+    return query<ShiftEntity>(
+      `SELECT id, external_id, starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by, created_at, updated_at
+       FROM shifts
+       WHERE series_id = $1
+       ORDER BY starts_at ASC`,
+      [seriesId],
+      executor
+    );
+  },
+
+  async deleteBySeriesId(seriesId: string, executor?: QueryExecutor): Promise<boolean> {
+    const rows = await query<{ id: string }>(
+      `DELETE FROM shifts WHERE series_id = $1 RETURNING id`,
+      [seriesId],
+      executor
+    );
+    return rows.length > 0;
+  },
+
   async findByExternalId(
     externalId: number,
     executor?: QueryExecutor

@@ -2,6 +2,18 @@
 
 A small clinic's staff-shift management website. Managers create shifts and assign staff; staff members claim/unclaim shifts for themselves. Built as a fullstack take-home, see `PROJECT_BRIEF.md` for the original spec and `DECISIONS.md` for the reasoning behind everything below.
 
+## Features
+
+- Role-based authentication
+- Shift creation and editing
+- Shift claim/unclaim
+- Manager assignment
+- CSV import pipeline
+- Import history
+- Recurring shift series
+- Live dashboard updates
+- Weekly coverage dashboard
+
 ## Stack
 
 | Layer | Tech |
@@ -57,11 +69,8 @@ staff.csv / shifts.csv             # The dirty spreadsheet exports (also used by
 
 ## Deployment
 
-*(fill in before submitting, the brief requires a live URL)*
+**Live URL:** https://clinic-shifts.vercel.app/
 
-**Live URL:** `TODO`
-
-If the host has a free-tier cold start, note the expected delay here (e.g. "first request after idle can take ~10s on Render's free tier").
 
 ## Setup
 
@@ -241,7 +250,7 @@ After `npm run seed`:
 
 | Role | Staff Code | Email | Password |
 |------|-----------|-------|----------|
-| Manager | `9000` | `manager@clinic.com` | `manager123` |
+| Manager | `9001` | `manager@clinic.com` | `manager123` |
 | Staff (doctor) | `121` | `marcus.whitfield@clinicmail.test` | `clinic123` |
 | Staff (nurse) | `131` | `anya.haddad@clinicmail.test` | `clinic123` |
 | Staff (receptionist) | `120` | `ben.marchand@clinicmail.test` | `clinic123` |

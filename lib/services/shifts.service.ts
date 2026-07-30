@@ -1,4 +1,4 @@
-import { shiftsRepo, shiftClaimsRepo, queryOne, ShiftEntity, CreateShiftInput, ShiftClaimWithUser } from "@/lib/db";
+import { shiftsRepo, shiftClaimsRepo, queryOne, withTransaction, ShiftEntity, CreateShiftInput, ShiftClaimWithUser, Profession } from "@/lib/db";
 
 export interface ShiftWithClaims extends ShiftEntity {
   claims: ShiftClaimWithUser[];
@@ -28,6 +28,20 @@ export interface UpdateShiftPayload {
   doctorsRequired?: number;
   nursesRequired?: number;
   receptionistsRequired?: number;
+}
+
+export interface UpdateShiftViolation {
+  type: "over_capacity" | "overlap";
+  profession: string;
+  details: string;
+  userId?: string;
+  userName?: string;
+}
+
+export interface UpdateShiftResult {
+  shift?: ShiftEntity;
+  violations?: UpdateShiftViolation[];
+  removedClaims?: { userId: string; userName: string; profession: string }[];
 }
 
 /**
@@ -97,7 +111,7 @@ export const shiftsService = {
     });
   },
 
-  async updateShift(id: string, payload: UpdateShiftPayload): Promise<ShiftEntity> {
+  async updateShift(id: string, payload: UpdateShiftPayload, force = false): Promise<UpdateShiftResult> {
     const existing = await shiftsRepo.findById(id);
     if (!existing) {
       throw new ShiftValidationError("Shift not found.", "NOT_FOUND");
@@ -128,19 +142,116 @@ export const shiftsService = {
       endsAt = calculated.endsAt;
     }
 
-    const updated = await shiftsRepo.update(id, {
-      starts_at: startsAt,
-      ends_at: endsAt,
-      doctors_required: doctors,
-      nurses_required: nurses,
-      receptionists_required: receptionists,
-    });
+    const timeChanged = startsAt.getTime() !== existing.starts_at.getTime() ||
+      endsAt.getTime() !== existing.ends_at.getTime();
+    const requirementsChanged = doctors !== existing.doctors_required ||
+      nurses !== existing.nurses_required ||
+      receptionists !== existing.receptionists_required;
 
-    if (!updated) {
-      throw new ShiftValidationError("Failed to update shift.", "UPDATE_FAILED");
+    if (!timeChanged && !requirementsChanged) {
+      const updated = await shiftsRepo.update(id, {
+        starts_at: startsAt,
+        ends_at: endsAt,
+        doctors_required: doctors,
+        nurses_required: nurses,
+        receptionists_required: receptionists,
+      });
+      if (!updated) throw new ShiftValidationError("Failed to update shift.", "UPDATE_FAILED");
+      return { shift: updated };
     }
 
-    return updated;
+    return withTransaction(async (client) => {
+      const locked = await shiftsRepo.findByIdForUpdate(id, client);
+      if (!locked) {
+        throw new ShiftValidationError("Shift not found.", "NOT_FOUND");
+      }
+
+      const claims = await shiftClaimsRepo.findByShiftIdWithUser(id, client);
+      const violations: UpdateShiftViolation[] = [];
+
+      if (requirementsChanged && claims.length > 0) {
+        const profMap: { profession: Profession; required: number; current: number }[] = [
+          { profession: "doctor", required: doctors, current: 0 },
+          { profession: "nurse", required: nurses, current: 0 },
+          { profession: "receptionist", required: receptionists, current: 0 },
+        ];
+
+        for (const claim of claims) {
+          const p = claim.user.profession;
+          if (p) {
+            const entry = profMap.find((e) => e.profession === p);
+            if (entry) entry.current++;
+          }
+        }
+
+        for (const entry of profMap) {
+          if (entry.required < entry.current) {
+            violations.push({
+              type: "over_capacity",
+              profession: entry.profession!,
+              details: `${entry.profession} requirement reduced from ${entry.current} to ${entry.required}, but ${entry.current} ${entry.profession}(s) are currently claimed`,
+            });
+          }
+        }
+      }
+
+      if (timeChanged && claims.length > 0) {
+        for (const claim of claims) {
+          if (!claim.user.profession) continue;
+          const overlapping = await shiftsRepo.findOverlappingForUserExcluding(
+            claim.user_id,
+            startsAt,
+            endsAt,
+            id,
+            client,
+          );
+          if (overlapping.length > 0) {
+            violations.push({
+              type: "overlap",
+              profession: claim.user.profession,
+              userId: claim.user_id,
+              userName: claim.user.full_name,
+              details: `Shift time change creates overlap for ${claim.user.full_name}`,
+            });
+          }
+        }
+      }
+
+      if (violations.length > 0 && !force) {
+        return { violations };
+      }
+
+      const removedClaims: { userId: string; userName: string; profession: string }[] = [];
+
+      if (force && violations.length > 0) {
+        for (const v of violations) {
+          if (v.type === "overlap" && v.userId) {
+            await shiftClaimsRepo.deleteByShiftAndUser(id, v.userId, client);
+            removedClaims.push({ userId: v.userId, userName: v.userName ?? "Unknown", profession: v.profession });
+          }
+        }
+      }
+
+      const updated = await shiftsRepo.update(
+        id,
+        {
+          starts_at: startsAt,
+          ends_at: endsAt,
+          doctors_required: doctors,
+          nurses_required: nurses,
+          receptionists_required: receptionists,
+        },
+        client,
+      );
+
+      if (!updated) {
+        throw new ShiftValidationError("Failed to update shift.", "UPDATE_FAILED");
+      }
+
+      const result: UpdateShiftResult = { shift: updated };
+      if (removedClaims.length > 0) result.removedClaims = removedClaims;
+      return result;
+    });
   },
 
   async deleteShift(id: string): Promise<boolean> {

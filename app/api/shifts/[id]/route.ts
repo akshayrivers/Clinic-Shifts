@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser, requireManager } from "@/lib/auth";
-import { shiftsService, ShiftValidationError } from "@/lib/services/shifts.service";
+import { shiftsService, ShiftValidationError, type UpdateShiftResult } from "@/lib/services/shifts.service";
 
 export async function GET(_req: Request, context: { params: Promise<{ id: string }> }) {
   try {
@@ -29,16 +29,27 @@ export async function PUT(req: Request, context: { params: Promise<{ id: string 
     const { id } = await context.params;
     const body = await req.json();
 
-    const updated = await shiftsService.updateShift(id, {
+    const force = body.force === true;
+    const result = await shiftsService.updateShift(id, {
       date: body.date,
       startTime: body.startTime,
       endTime: body.endTime,
       doctorsRequired: body.doctorsRequired,
       nursesRequired: body.nursesRequired,
       receptionistsRequired: body.receptionistsRequired,
-    });
+    }, force);
 
-    return NextResponse.json({ shift: updated });
+    if (result.violations && !result.shift) {
+      return NextResponse.json(
+        { violations: result.violations },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({
+      shift: result.shift,
+      removedClaims: result.removedClaims,
+    });
   } catch (error) {
     if (error instanceof ShiftValidationError) {
       const status = error.code === "NOT_FOUND" ? 404 : 400;

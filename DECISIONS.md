@@ -66,7 +66,7 @@ roles: Manager and Staff. Staff can have different profession too. So rather tha
 
 `profession`: Only field where null is allowed. Manager will have a null profession and staff will have the infered role from the csv
 
-`staff_code`: Our actual unique Identification for a clinic infered from the csv. (I am assigning the staff_code=0 to my manager as of now in future with better signup and login fucntionality that will change accordingly)
+`staff_code`: Our actual unique Identification for a clinic infered from the csv. (I am assigning the staff_code=9001 to my manager as of now in future with better signup and login fucntionality that will change accordingly)
 
 `created_at`: For better audit trail
 
@@ -93,7 +93,7 @@ No branching, no edge cases for the overnight ones.
 columns, not a free-text or JSON requirements field. The CSV mixes structured strings
 (`nurses=3;doctors=1`) with at least one row of plain prose ("two nurses and a doctor").
 Rather than parsing requirement strings at query time throughout the app, I parse once,
-at import time, into three ints — after that the coverage dashboard's "still missing X"
+at import time, into three ints, after that the coverage dashboard's "still missing X"
 logic is just subtraction, not a string parse.
 
 Import decisions for shifts.csv specifically:
@@ -102,29 +102,29 @@ Import decisions for shifts.csv specifically:
   position (a date like 08-13-2026 can't be month=13, so that tells me this convention
   is day-first) - reject in this batch, this is a good change.
 - Impossible dates (2026-02-30) are rejected outright.
-- A start_time equal to end_time (12:00-12:00) is ambiguous — is it a zero-length shift,
+- A start_time equal to end_time (12:00-12:00) is ambiguous: is it a zero-length shift,
   or a typo for a 24hr shift? I reject and flag for manual review rather than guess.
-- A missing start_time is rejected — there's no safe default for a shift's start.
+- A missing start_time is rejected: there's no safe default for a shift's start.
 - Free-text requirements ("two nurses and a doctor") are rejected rather than
-  NLP-parsed — too fragile for a small set of edge cases. Requirement keys the parser
+  NLP-parsed, are too fragile for a small set of edge cases. Requirement keys the parser
   doesn't recognize just get a reason logged; keys that are present but missing a role
   (e.g. only `nurses=1` with no doctors/receptionists mentioned) default that role to 0.
-- An exact duplicate shift_id is treated as a duplicate row and merged/skipped, same
+- An exact duplicate shift_id (`external_id`) is treated as a duplicate row and merged/skipped, same
   policy as the staff_id case above.
 
 ## Shift Claims
 >shift_id,user_id,claimed_by
 
-This table is basically the join between a staff member and a shift they've picked up (or been assigned). I kept it deliberately thin — three foreign keys and a timestamp — because all the actual business logic (does this person already have too many people of their profession, does it overlap with something else they've claimed) lives in the transaction that writes to this table, not in the table itself. The schema's job here is just to make illegal states unrepresentable.
+This table is basically the join between a staff member and a shift they've picked up (or been assigned). I kept it deliberately thin: three foreign keys and a timestamp, because all the actual business logic (does this person's claimed shift already have too many people of their profession, does it overlap with something else they've claimed) lives in the transaction that writes to this table, not in the table itself. The schema's job here is just to make illegal states unrepresentable.
 
-`claimed_by`: this is the field that lets a manager assign someone to a shift and a staff member self-claim through the exact same code path. Both cases insert a row here — the only difference is whether claimed_by == user_id (self-claim) or claimed_by is a manager's id (assigned). I did this on purpose so I only have to write and test the claim-validation rules ONCE, instead of having a separate "assign" function that could drift out of sync with the "claim" function and accidentally let a manager bypass a rule a staff member can't.
+`claimed_by`: this is the field that lets a manager assign someone to a shift and a staff member self-claim through the exact same code path. Both cases insert a row here, the only difference is whether claimed_by == user_id (self-claim) or claimed_by is a manager's id (assigned). I did this on purpose so I only have to write and test the claim-validation rules ONCE, instead of having a separate "assign" function that could drift out of sync with the "claim" function and accidentally let a manager bypass a rule a staff member can't.
 
-`unique(shift_id, user_id)`: this is the part I actually care most about in this whole table. Even if my application-level transaction logic has a bug, or two requests genuinely hit the database in the same instant, Postgres will just reject the second insert outright. So this constraint is my safety net for the concurrency requirement — the "real" concurrency-correctness work happens in the transaction (row lock on the shift, then count claims by profession, then insert), but this constraint means even a worst-case race can't produce a duplicate claim.
+`unique(shift_id, user_id)`: this is the part I actually care most about in this whole table. Even if my application-level transaction logic has a bug, or two requests genuinely hit the database in the same instant, Postgres will just reject the second insert outright. So this constraint is my safety net for the concurrency requirement, the "real" concurrency-correctness work happens in the transaction (row lock on the shift, then count claims by profession, then insert), but this constraint means even a worst-case race can't produce a duplicate claim.
 
 ## Shift Series
 >"every Mon/Wed 08:00-16:00 until 2026-09-30"
 
-This one's for the recurring shifts stretch goal. I went back and forth here — do I store the recurrence rule and compute occurrences on the fly, or do I materialize every occurrence as an actual row in shifts at creation time?
+This one's for the recurring shifts stretch goal. I went much back and forth here, do I store the recurrence rule and compute occurrences on the fly, or do I materialize every occurrence as an actual row in shifts at creation time?
 
 I landed on materializing every occurrence as a real row in shifts, linked back with series_id. My reasoning: the brief explicitly asks for "edit or delete a single occurrence without breaking the series." If occurrences are computed on the fly, editing just ONE of them means I now need some kind of "exception" or "override" record layered on top of the recurrence rule, and my claim/overlap logic has to understand both real rows and virtual/computed rows. That's a lot of extra complexity for a stretch goal. With materialized rows, editing one occurrence is just... editing that one row in shifts. Nothing else needs to know it came from a series.
 
@@ -136,9 +136,9 @@ The tradeoff I'm accepting: if a manager creates a series that runs for a year, 
 
 This pair of tables exists purely to make the Import Report page (manager-only, per the brief) a query instead of something I have to recompute by re-reading the CSV every time someone opens that page.
 
-`import_batches`: one row per import RUN — whether that's the automatic seed import or a manager uploading a fresh CSV through the UI. Same table, same logic, both paths — the brief specifically calls out that the manual upload has to use the same import logic as the seed, so I made sure there's only one import function, and both entry points just call it with a different source file.
+`import_batches`: one row per import RUN — whether that's the automatic seed import or a manager uploading a fresh CSV through the UI. Same table, same logic, both paths, the brief specifically calls out that the manual upload has to use the same import logic as the seed, so I made sure there's only one import function, and both entry points just call it with a different source file.
 
-`import_rows`: one row per CSV row, no matter what happened to it. I went back and forth on whether to only log the rejected/merged ones (since those are the "interesting" ones), but decided I want ALL of them logged, accepted included. Reasoning: the report needs an accepted count, and I don't want that number to be total_rows - count(logged) — that's the kind of thing that quietly breaks the moment there's a bug in my counting logic elsewhere. Logging everything means "how many accepted" is just count(*) where status='accepted', full stop.
+`import_rows`: one row per CSV row, no matter what happened to it. I went back and forth on whether to only log the rejected/merged ones (since those are the "interesting" ones), but decided I want ALL of them logged, accepted included. Reasoning: the report needs an accepted count, and I don't want that number to be total_rows: count(logged) that's the kind of thing that can quietly break the moment there's a bug in my counting logic elsewhere. Logging everything means "how many accepted" is just count(*) where status='accepted'.
 
 `raw_data as jsonb`: I store the row exactly as it came out of the CSV, before any of my normalization touches it. This is what actually lets me show a manager "here's the exact row, here's what was wrong with it" on the report page, rather than showing them my already-cleaned-up version of a row I decided to reject.
 
@@ -151,24 +151,24 @@ This pair of tables exists purely to make the Import Report page (manager-only, 
 
 ## Importing data from .csv files
 
-One `importService` with two entry points (`importStaffCSV` / `importShiftsCSV`), both called from the same place whether it's the seed script (`scripts/seed-import.ts`) or a manager hitting `POST /api/import` with an uploaded file. That was non-negotiable per the brief ("must use the same import logic"), so I never let the upload route touch a parsed row directly — it just reads the file text and hands it to the same service the seed uses.
+One `importService` with two entry points (`importStaffCSV` / `importShiftsCSV`), both called from the same place whether it's the seed script (`scripts/seed-import.ts`) or a manager hitting `POST /api/import` with an uploaded file. That was non-negotiable per the brief ("must use the same import logic"), so I never let the upload route touch a parsed row directly, it just reads the file text and hands it to the same service the seed uses.
 
-Both import functions run inside a single DB transaction per batch (`withTransaction`), and every row — accepted, merged, or rejected — gets written to `import_rows` before the function returns. A few things worth calling out about how the actual implementation ended up differing from what I originally sketched above:
+Both import functions run inside a single DB transaction per batch (`withTransaction`), and every row — accepted, merged, or rejected, gets written to `import_rows` before the function returns. A few things worth calling out about how the actual implementation ended up differing from what I originally sketched above:
 
-- **Dates aren't rejected when ambiguous — I made a fixed judgment call instead.** Earlier in this doc I said I'd reject ambiguous slash/dash dates. In the real implementation I didn't do that: `DD/MM/YYYY` (slash) is always parsed day-first, `MM-DD-YYYY` (dash) is always parsed month-first, and only genuinely impossible dates (`2026-02-30`, day 13 in a month position) get rejected. I went back and forth on this, but decided a small clinic's real spreadsheet almost certainly used one consistent convention per separator, and rejecting every slash-date because *some* dash-date elsewhere in the file could theoretically be ambiguous felt like it would reject far more good data than it saved me from bad data. This is a judgment call, not a certainty — I'd flag it to a real clinic and ask them to confirm the convention rather than assume it.
+- **Dates aren't rejected when ambiguous — I made a fixed judgment call instead.** Earlier in this doc I said I'd reject ambiguous slash/dash dates. In the real implementation I didn't do that: `DD/MM/YYYY` (slash) is always parsed day-first, `MM-DD-YYYY` (dash) is always parsed month-first, and only genuinely impossible dates (`2026-02-30`, day 13 in a month position) get rejected. I thought a lot about this, but decided a small clinic's real spreadsheet almost certainly used one consistent convention per separator, and rejecting every slash-date because *some* dash-date elsewhere in the file could theoretically be ambiguous felt like it would reject far more good data than it saved me from bad data. This is a judgment call, not a certainty, I'd certianly flag it for a real clinic and ask them to confirm the convention rather than assume it.
 - **`12:00–12:00` is not rejected — it's treated as a 24-hour shift.** I'd originally planned to reject equal start/end times as ambiguous. When I actually got to writing `calculateShiftTimestamps`, I changed my mind: the same "roll over midnight if `end <= start`" rule I already needed for overnight shifts (22:00→06:00) handles this case for free, and a 24-hour shift is a real thing a small clinic could plausibly schedule (on-call coverage). So `12:00` to `12:00` becomes a 24-hour shift rather than a rejected row. I'm noting this here because it's a real inconsistency with what I said earlier in this doc, and it's the kind of assumption I'd want a manager to sanity-check on the Import Report page rather than silently trust.
-- **Duplicate `staff_id` / `shift_id` are merged (updated in place), not skipped.** The row is still logged with status `merged` and a reason, and the existing record's fields get overwritten with the newer row's values. I chose "last write wins, but logged" over "first write wins, duplicate discarded" because a duplicate row later in the file is more likely to be a *correction* (someone fixed a typo and re-exported) than noise — but either way, the report shows exactly what happened so a manager can catch it if I guessed wrong.
-- **Unrecognized requirement keys or genuinely unparseable strings (`"two nurses and a doctor"`) are rejected, not defaulted.** But a recognized key that's just missing from the string (`nurses=1` with no `doctors=`/`receptionists=` at all) defaults the missing roles to `0` rather than rejecting the whole row — I only reject when I can't confidently parse *something*, not when a role simply isn't mentioned.
-- A shift row with all-zero requirements (`nurses=0;doctors=0;receptionists=0`) is rejected outright — a shift that needs nobody isn't a shift.
+- **Duplicate `staff_id` / `shift_id` are merged (updated in place), not skipped.** The row is still logged with status `merged` and a reason, and the existing record's fields get overwritten with the newer row's values. I chose "last write wins, but logged" over "first write wins, duplicate discarded" because a duplicate row later in the file is more likely to be a *correction* (someone fixed a typo and re-exported) than noise, but either way, the report shows exactly what happened so a manager can catch it if I guessed wrong.
+- **Unrecognized requirement keys or genuinely unparseable strings (`"two nurses and a doctor"`) are rejected, not defaulted.** But a recognized key that's just missing from the string (`nurses=1` with no `doctors=`/`receptionists=` at all) defaults the missing roles to `0` rather than rejecting the whole row,I only reject when I can't confidently parse *something*, not when a role simply isn't mentioned.
+- A shift row with all-zero requirements (`nurses=0;doctors=0;receptionists=0`) is rejected outright — a shift that needs nobody isn't a shift.I consider this an edge case.
 
 ## Shift claims
 
 `POST /api/shifts/:id/claim` and `DELETE /api/shifts/:id/claim` are the only two endpoints here, and they're intentionally the same route for both self-claim and manager-assign, per the `claimed_by` design from the schema section above. The authorization split happens right at the route, before the service is ever called:
 
 - If the caller is `staff`, the target user is always themselves — `body.userId` is simply ignored for non-managers, not validated-and-rejected. I did it this way so a staff member can't even *attempt* to assign someone else and get a "here's why not" error that leaks information about other staff's schedules; the request just quietly claims for themselves.
-- If the caller is `manager` and passes a `userId`, that's who gets assigned. If they don't pass one, it falls back to self-claim, so the same endpoint works for a manager claiming a shift for themselves too.
+- If the caller is `manager` and passes a `userId`, that's who gets assigned. If they don't pass one, it falls back to self-claim, so the same endpoint works for a manager claiming a shift for themselves too. I know a manager cannot claim a shift for themselves, For now I have handled that in the frontend logic but I have still kept it as a fallback.
 
-Inside `shiftClaimService.claimShift`, everything happens in one transaction, in this order: lock the shift row (`SELECT ... FOR UPDATE`), validate the target user exists and is staff with a profession, check for a duplicate claim, check profession capacity (count of existing claims for that profession vs. the shift's requirement), then check overlap against every other shift that user has already claimed. Any failure throws a typed `ShiftClaimError` with a `code` (`CAPACITY_REACHED`, `OVERLAPPING_SHIFT`, `DUPLICATE_CLAIM`, etc.) that the route maps to the right HTTP status — 409 for the "someone beat you to it" / conflict cases, 404 for not-found, 400 otherwise. Unclaiming follows the same "staff can only act on themselves, manager can act on anyone" rule, enforced in the service rather than trusted from the client.
+Inside `shiftClaimService.claimShift`, everything happens in one transaction, in this order: lock the shift row (`SELECT ... FOR UPDATE`), validate the target user exists and is staff with a profession, check for a duplicate claim, check profession capacity (count of existing claims for that profession vs. the shift's requirement), then check overlap against every other shift that user has already claimed. Any failure throws a typed `ShiftClaimError` with a `code` (`CAPACITY_REACHED`, `OVERLAPPING_SHIFT`, `DUPLICATE_CLAIM`, etc.) that the route maps to the right HTTP status 409 for the "someone beat you to it" / conflict cases, 404 for not-found, 400 otherwise. Unclaiming follows the same "staff can only act on themselves, manager can act on anyone" rule, enforced in the service rather than trusted from the client.
 
 ## Editing the shifts
 

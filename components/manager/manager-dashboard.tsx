@@ -189,7 +189,7 @@ export function ManagerDashboard() {
   }, [shifts, searchQuery, roleFilter, statusFilter, getShiftStaffingMetrics]);
 
   // Shift Create/Edit Handler
-  const handleSaveShift = async (e: React.FormEvent) => {
+  const handleSaveShift = async (e: React.FormEvent, force = false) => {
     e.preventDefault();
 
     try {
@@ -198,18 +198,47 @@ export function ManagerDashboard() {
         : "/api/shifts";
       const method = editingShiftId ? "PUT" : "POST";
 
+      const body = force
+        ? { ...formData, force: true }
+        : formData;
+
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
+
+      if (res.status === 409 && data.violations && !force) {
+        const violationMessages = data.violations.map(
+          (v: { type: string; details: string }) => `• ${v.details}`,
+        );
+        const confirmMsg =
+          `This change affects existing claims:\n\n${violationMessages.join("\n")}\n\n` +
+          (data.violations.some((v: { type: string }) => v.type === "overlap")
+            ? "Overlapping claims will be automatically removed if you proceed.\n"
+            : "") +
+          "\nProceed anyway?";
+        if (confirm(confirmMsg)) {
+          return handleSaveShift(e, true);
+        }
+        return;
+      }
+
       if (!res.ok) throw new Error(data.error || "Failed to save shift");
 
       setIsModalOpen(false);
       setEditingShiftId(null);
-      addToast("success", "Shift saved successfully!");
+
+      if (data.removedClaims?.length > 0) {
+        const names = data.removedClaims.map(
+          (c: { userName: string }) => c.userName,
+        );
+        addToast("success", `Shift saved. Removed ${names.join(", ")} due to overlap.`);
+      } else {
+        addToast("success", "Shift saved successfully!");
+      }
       fetchShifts(false);
     } catch (err: unknown) {
       addToast("error", (err as Error).message);
@@ -218,7 +247,13 @@ export function ManagerDashboard() {
 
   // Delete Shift Handler
   const handleDeleteShift = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this shift?")) return;
+    const shift = shifts.find((s) => s.id === id);
+    const claimCount = shift?.claims?.length ?? 0;
+    const claimDetail =
+      claimCount > 0
+        ? `\n\n⚠ This shift has ${claimCount} staff member${claimCount > 1 ? "s" : ""} assigned. Deleting it will remove all assignments.`
+        : "";
+    if (!confirm(`Are you sure you want to delete this shift?${claimDetail}`)) return;
     try {
       const res = await fetch(`/api/shifts/${id}`, { method: "DELETE" });
       if (!res.ok) {

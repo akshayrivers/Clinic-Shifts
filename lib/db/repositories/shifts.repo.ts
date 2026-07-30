@@ -51,6 +51,25 @@ export const shiftsRepo = {
     );
   },
 
+  async findOverlappingForUserExcluding(
+    userId: string,
+    startsAt: Date | string,
+    endsAt: Date | string,
+    excludeShiftId: string,
+    executor?: QueryExecutor
+  ): Promise<ShiftEntity[]> {
+    return query<ShiftEntity>(
+      `SELECT s.id,s.external_id, s.starts_at, s.ends_at, s.doctors_required, s.nurses_required, s.receptionists_required, s.series_id, s.created_by, s.created_at, s.updated_at
+       FROM shift_claims sc
+       JOIN shifts s ON sc.shift_id = s.id
+       WHERE sc.user_id = $1
+         AND s.id != $4
+         AND (s.starts_at < $3 AND s.ends_at > $2)`,
+      [userId, startsAt, endsAt, excludeShiftId],
+      executor
+    );
+  },
+
   async create(data: CreateShiftInput, executor?: QueryExecutor): Promise<ShiftEntity> {
     const rows = await query<ShiftEntity>(
       `INSERT INTO shifts (starts_at, ends_at, doctors_required, nurses_required, receptionists_required, series_id, created_by,external_id)

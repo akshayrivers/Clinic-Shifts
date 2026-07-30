@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Navbar } from "@/components/navbar";
 
 interface ImportRow {
@@ -14,12 +14,15 @@ interface ImportRow {
   created_at: string;
 }
 
+interface ImportBatch {
+  id: string;
+  source_filename: string;
+  imported_by: string | null;
+  imported_at: string;
+}
+
 interface ImportSummary {
-  batch: {
-    id: string;
-    source_filename: string;
-    imported_at: string;
-  };
+  batch: ImportBatch;
   totalRows: number;
   acceptedCount: number;
   rejectedCount: number;
@@ -34,12 +37,56 @@ export default function ImportReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
 
+  const [batches, setBatches] = useState<ImportBatch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [selectedBatchDetail, setSelectedBatchDetail] = useState<ImportSummary | null>(null);
+  const [isBatchLoading, setIsBatchLoading] = useState(false);
+
+  const fetchBatches = useCallback(async () => {
+    try {
+      const res = await fetch("/api/import");
+      if (!res.ok) return;
+      const data = await res.json();
+      setBatches(data.batches || []);
+    } catch {
+      // silent
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBatches();
+  }, [fetchBatches]);
+
+  const fetchBatchDetail = useCallback(async (batchId: string) => {
+    setIsBatchLoading(true);
+    try {
+      const res = await fetch(`/api/import/${batchId}`);
+      if (!res.ok) throw new Error("Failed to load batch");
+      const data = await res.json();
+      setSelectedBatchDetail({
+        batch: data.batch,
+        rows: data.rows,
+        totalRows: data.totalRows,
+        acceptedCount: data.acceptedCount,
+        rejectedCount: data.rejectedCount,
+        mergedCount: data.mergedCount,
+      });
+    } catch (err: unknown) {
+      setError((err as Error).message);
+    } finally {
+      setIsBatchLoading(false);
+    }
+  }, []);
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
 
     setIsLoading(true);
     setError(null);
+    setSummary(null);
+    setSelectedBatchId(null);
+    setSelectedBatchDetail(null);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -57,12 +104,15 @@ export default function ImportReportPage() {
       }
 
       setSummary(data.summary);
+      fetchBatches();
     } catch (err: unknown) {
       setError((err as Error).message);
     } finally {
       setIsLoading(false);
     }
   };
+
+  const activeDetail = selectedBatchDetail || summary;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col">
@@ -126,31 +176,31 @@ export default function ImportReportPage() {
         </div>
 
         {/* Summary & Report Metrics */}
-        {summary && (
+        {activeDetail && (
           <div className="space-y-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
                 <div className="text-sm font-medium text-slate-500">Total Rows Processed</div>
                 <div className="text-3xl font-bold mt-1 text-slate-900 dark:text-slate-100">
-                  {summary.totalRows}
+                  {activeDetail.totalRows}
                 </div>
               </div>
               <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 rounded-xl p-5 shadow-sm">
                 <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300">Accepted</div>
                 <div className="text-3xl font-bold mt-1 text-emerald-700 dark:text-emerald-400">
-                  {summary.acceptedCount}
+                  {activeDetail.acceptedCount}
                 </div>
               </div>
               <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-xl p-5 shadow-sm">
                 <div className="text-sm font-medium text-amber-800 dark:text-amber-300">Merged</div>
                 <div className="text-3xl font-bold mt-1 text-amber-700 dark:text-amber-400">
-                  {summary.mergedCount}
+                  {activeDetail.mergedCount}
                 </div>
               </div>
               <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-xl p-5 shadow-sm">
                 <div className="text-sm font-medium text-rose-800 dark:text-rose-300">Rejected</div>
                 <div className="text-3xl font-bold mt-1 text-rose-700 dark:text-rose-400">
-                  {summary.rejectedCount}
+                  {activeDetail.rejectedCount}
                 </div>
               </div>
             </div>
@@ -158,8 +208,25 @@ export default function ImportReportPage() {
             {/* Detailed Row Breakdown Table */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
               <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                <h3 className="font-semibold text-lg">Import Batch Log ({summary.batch.source_filename})</h3>
-                <span className="text-xs text-slate-500 font-mono">Batch ID: {summary.batch.id}</span>
+                <h3 className="font-semibold text-lg">
+                  Import Batch Log ({activeDetail.batch.source_filename})
+                </h3>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500 font-mono">
+                    {new Date(activeDetail.batch.imported_at).toLocaleString()}
+                  </span>
+                  {selectedBatchDetail && (
+                    <button
+                      onClick={() => {
+                        setSelectedBatchId(null);
+                        setSelectedBatchDetail(null);
+                      }}
+                      className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
+                    >
+                      &larr; Back to history
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
@@ -172,7 +239,7 @@ export default function ImportReportPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {summary.rows.map((r) => (
+                    {activeDetail.rows.map((r) => (
                       <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                         <td className="py-3.5 px-4 font-mono font-medium text-slate-500">{r.row_number}</td>
                         <td className="py-3.5 px-4">
@@ -201,6 +268,49 @@ export default function ImportReportPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Past Import Batches List */}
+        {!selectedBatchDetail && !summary && batches.length > 0 && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+            <h2 className="text-lg font-bold mb-4">Import History</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr className="bg-slate-100 dark:bg-slate-800/60 text-slate-600 dark:text-slate-400 font-semibold border-b border-slate-200 dark:border-slate-800">
+                    <th className="py-3 px-4">Filename</th>
+                    <th className="py-3 px-4">Imported At</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {batches.map((b) => (
+                    <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="py-3.5 px-4 font-medium">{b.source_filename}</td>
+                      <td className="py-3.5 px-4 text-slate-500 text-xs">
+                        {new Date(b.imported_at).toLocaleString()}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            setSelectedBatchId(b.id);
+                            fetchBatchDetail(b.id);
+                          }}
+                          className="bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-xs font-semibold px-2.5 py-1.5 rounded transition-colors"
+                        >
+                          View Details
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {isBatchLoading && (
+          <div className="text-center py-8 text-slate-500 text-sm">Loading batch details...</div>
         )}
       </main>
     </div>

@@ -1,6 +1,21 @@
 import { NextResponse } from "next/server";
 import { requireManager } from "@/lib/auth";
 import { importService } from "@/lib/services/import.service";
+import { importsRepo } from "@/lib/db";
+
+export async function GET() {
+  try {
+    await requireManager();
+    const batches = await importsRepo.findAllBatches();
+    return NextResponse.json({ batches });
+  } catch (error) {
+    if ((error as Error).message?.includes("UNAUTHORIZED")) {
+      return NextResponse.json({ error: (error as Error).message }, { status: 403 });
+    }
+    console.error("GET /api/import error:", error);
+    return NextResponse.json({ error: "Failed to fetch import batches." }, { status: 500 });
+  }
+}
 
 export async function POST(req: Request) {
   try {

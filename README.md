@@ -142,9 +142,11 @@ Base URL: `http://localhost:3000`
 
 | Method | Endpoint | Auth | Body | Description |
 |--------|----------|------|------|-------------|
+| GET | `/api/import` | Manager | none | List every past import batch (seed run included), newest first. |
+| GET | `/api/import/:id` | Manager | none | Get one batch's full row list, plus computed counts (total, accepted, rejected, merged). |
 | POST | `/api/import` | Manager | `multipart/form-data` (`file`, `type: "staff" \| "shifts"`) or `{ content, filename, type }` | Runs the uploaded CSV through the exact same import logic used by `npm run seed`, and returns a per-row report (accepted / merged / rejected + reason for each). |
 
-> There is currently no `GET /api/import` for historical batches, the Import Report page only shows the result of whatever upload just ran in that session, not a persisted history of every past batch (including the automatic seed import). Every row from every batch, seed included, *is* stored in `import_rows`/`import_batches`, so a history endpoint is a query away, it just isn't wired up to the UI yet.
+The manager-only Import Report page (`/manager/import`) has two modes now: upload mode (upload a CSV, see the result) and history mode (loads on page open, lists every past batch, click into one for the same detail view with a link back to the list).
 
 ## Import Behavior (short version)
 
@@ -250,8 +252,7 @@ Every other row that survives import from `staff.csv` logs in the same way: thei
 
 See `DECISIONS.md` for the full reasoning, but in short:
 
-- A manager could technically self-claim a shift via a direct API call, the assign picker in the UI never offers a manager as an option, but that's a frontend choice, not a server-enforced rule yet.
-- No persisted "view past import batches" screen, only the result of the import that just ran is shown.
+- No persisted schema migration for the base tables; only one incremental migration file is tracked, the rest was set up directly in the Supabase dashboard.
 - No self-serve password reset; every imported account shares one default password.
 - CSV parsing is hand-rolled (naive comma/newline split), not a proper CSV library.
 - No dedicated automated test for shift series creation (day-of-week generation, whole-series delete) yet, though the pieces it's built on (shift create/edit) are tested.

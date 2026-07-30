@@ -11,7 +11,7 @@ export function StaffDashboard() {
   const currentUser = session?.user;
 
   const [shifts, setShifts] = useState<ShiftItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"available" | "my_claims">(
     "available",
   );
@@ -21,9 +21,9 @@ export function StaffDashboard() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [actioningShiftId, setActioningShiftId] = useState<string | null>(null);
 
-  const fetchShifts = useCallback(async () => {
+  const fetchShifts = useCallback(async (showLoading = true) => {
     try {
-      setIsLoading(true);
+      if (showLoading) setIsInitialLoading(true);
       const res = await fetch("/api/shifts");
       if (!res.ok) throw new Error("Failed to load shifts");
       const data = await res.json();
@@ -35,7 +35,7 @@ export function StaffDashboard() {
     } catch (err: unknown) {
       setValidationError((err as Error).message);
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsInitialLoading(false);
     }
   }, []);
 
@@ -43,9 +43,9 @@ export function StaffDashboard() {
     fetchShifts();
   }, [fetchShifts]);
 
-  // Realtime subscription
+  // Realtime subscription — refresh without loading flash
   useRealtimeShifts(() => {
-    fetchShifts();
+    fetchShifts(false);
   });
 
   const currentProfession = currentUser?.profession;
@@ -97,7 +97,7 @@ export function StaffDashboard() {
       }
 
       setSuccessMessage("Shift claimed successfully!");
-      fetchShifts();
+      fetchShifts(false);
     } catch (err: unknown) {
       setValidationError((err as Error).message);
     } finally {
@@ -122,7 +122,7 @@ export function StaffDashboard() {
       }
 
       setSuccessMessage("Shift unclaimed successfully.");
-      fetchShifts();
+      fetchShifts(false);
     } catch (err: unknown) {
       setValidationError((err as Error).message);
     } finally {
@@ -240,7 +240,7 @@ export function StaffDashboard() {
             : "My Schedule & Claimed Shifts"}
         </h2>
 
-        {isLoading ? (
+        {isInitialLoading ? (
           <div className="py-12 text-center text-slate-500 text-sm">
             Loading shift schedules...
           </div>

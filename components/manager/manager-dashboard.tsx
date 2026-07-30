@@ -17,7 +17,7 @@ export interface StaffUser {
 
 export function ManagerDashboard() {
   const [shifts, setShifts] = useState<ShiftItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Filters & Search State
@@ -70,9 +70,9 @@ export function ManagerDashboard() {
     fetchStaffList();
   }, [fetchStaffList]);
 
-  const fetchShifts = useCallback(async () => {
+  const fetchShifts = useCallback(async (showLoading = true) => {
     try {
-      setIsLoading(true);
+      if (showLoading) setIsInitialLoading(true);
       const res = await fetch("/api/shifts");
       if (!res.ok) throw new Error("Failed to load shifts");
       const data = await res.json();
@@ -91,7 +91,7 @@ export function ManagerDashboard() {
     } catch (err: unknown) {
       setError((err as Error).message);
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsInitialLoading(false);
     }
   }, []);
 
@@ -99,9 +99,9 @@ export function ManagerDashboard() {
     fetchShifts();
   }, [fetchShifts]);
 
-  // Realtime update callback
+  // Realtime update callback — refresh without loading flash
   useRealtimeShifts(() => {
-    fetchShifts();
+    fetchShifts(false);
   });
 
   // The shift the "Assign Staff" modal is currently open for — drives the
@@ -196,7 +196,7 @@ export function ManagerDashboard() {
 
       setIsModalOpen(false);
       setEditingShiftId(null);
-      fetchShifts();
+      fetchShifts(false);
     } catch (err: unknown) {
       setError((err as Error).message);
     }
@@ -211,7 +211,7 @@ export function ManagerDashboard() {
         const data = await res.json();
         throw new Error(data.error || "Failed to delete shift");
       }
-      fetchShifts();
+      fetchShifts(false);
     } catch (err: unknown) {
       setError((err as Error).message);
     }
@@ -235,7 +235,7 @@ export function ManagerDashboard() {
 
       setAssignUserId("");
       setAssignActionMessage("Staff member assigned successfully!");
-      fetchShifts();
+      fetchShifts(false);
     } catch (err: unknown) {
       setAssignActionMessage(`Error: ${(err as Error).message}`);
     }
@@ -253,7 +253,7 @@ export function ManagerDashboard() {
         throw new Error(data.error || "Failed to remove staff");
       }
 
-      fetchShifts();
+      fetchShifts(false);
     } catch (err: unknown) {
       setError((err as Error).message);
     }
@@ -381,7 +381,7 @@ export function ManagerDashboard() {
         </div>
 
         {/* Shift List Table */}
-        {isLoading ? (
+        {isInitialLoading ? (
           <div className="py-12 text-center text-slate-500 text-sm">
             Loading shifts...
           </div>
